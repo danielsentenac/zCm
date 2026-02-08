@@ -1,1 +1,0 @@
-/usr/bin/cc -Wl,--dependency-file=CMakeFiles/zcm_bytes_pub.dir/link.d CMakeFiles/zcm_bytes_pub.dir/examples/zcm_bytes_pub.c.o -o examples/zcm_bytes_pub  libzcm_lib.a -lzmq

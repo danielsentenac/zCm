@@ -1,1 +1,0 @@
-/usr/bin/cc -Wl,--dependency-file=CMakeFiles/zcm_node_list.dir/link.d CMakeFiles/zcm_node_list.dir/tests/zcm_node_list.c.o -o tests/zcm_node_list  libzcm_lib.a -lzmq

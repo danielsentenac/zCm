@@ -1,1 +1,0 @@
-/usr/bin/cc -Wl,--dependency-file=CMakeFiles/zcm_smoke.dir/link.d CMakeFiles/zcm_smoke.dir/tests/zcm_smoke.c.o -o zcm_smoke  libzcm.a -lzmq

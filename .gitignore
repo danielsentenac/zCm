@@ -1,0 +1,13 @@
+# build artifacts
+/build/
+/CMakeFiles/
+/CMakeCache.txt
+/cmake_install.cmake
+/Makefile
+/CTestTestfile.cmake
+
+# editor/temp
+*.swp
+*.swo
+*~
+.DS_Store

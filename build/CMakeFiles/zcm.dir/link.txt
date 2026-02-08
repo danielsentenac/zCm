@@ -1,1 +1,0 @@
-/usr/bin/cc -Wl,--dependency-file=CMakeFiles/zcm.dir/link.d CMakeFiles/zcm.dir/tools/zcm/zcm_cli.c.o -o tools/zcm  libzcm_lib.a -lpthread -lzmq

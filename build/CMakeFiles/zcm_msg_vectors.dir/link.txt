@@ -1,1 +1,0 @@
-/usr/bin/cc -Wl,--dependency-file=CMakeFiles/zcm_msg_vectors.dir/link.d CMakeFiles/zcm_msg_vectors.dir/tests/zcm_msg_vectors.c.o -o tests/zcm_msg_vectors  libzcm_lib.a -lzmq
