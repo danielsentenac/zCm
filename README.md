@@ -1,13 +1,13 @@
 # zCm
 
-New middleware package for Virgo DAQ modernization, intended to unify Cm/Fd/Fbs-style communication and frame distribution with a simpler, configurable transport layer (ZeroMQ-backed in v0.1).
+Lightweight messaging toolkit with a directory-service broker and direct peer-to-peer data paths. The broker maintains the registry (name → endpoint), while applications connect directly to exchange data after lookup. This matches the "broker as a directory service" architecture popularized in ØMQ/ZeroMQ patterns, where the broker handles discovery and peers handle transfer.
 
 ## v0.1 Scope
 - Broker/registry (`zcm-broker`) for name -> endpoint lookup
 - Client API (`zcm-node`) to register and lookup
 - Minimal typed message envelope (`zcm-msg`)
 - ZeroMQ transport support (`tcp`, `ipc`, `inproc`)
-- Bridge mode planned (legacy Cm/Fd/Fbs compatibility via a shim)
+- Direct peer-to-peer data transfer after broker lookup
 
 ## Build
 ```bash
