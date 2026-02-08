@@ -11,3 +11,6 @@
 *.swo
 *~
 .DS_Store
+
+# temporary excludes
+/tools/cm-bridge/
