@@ -1,0 +1,1 @@
+/usr/bin/cc -Wl,--dependency-file=CMakeFiles/zcm_send_helloworld.dir/link.d CMakeFiles/zcm_send_helloworld.dir/examples/zcm_send_helloworld.c.o -o examples/zcm_send_helloworld  libzcm_lib.a -lzmq

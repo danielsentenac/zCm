@@ -1,0 +1,1 @@
+/usr/bin/cc -Wl,--dependency-file=CMakeFiles/zcm_msg_roundtrip.dir/link.d CMakeFiles/zcm_msg_roundtrip.dir/tests/zcm_msg_roundtrip.c.o -o tests/zcm_msg_roundtrip  libzcm_lib.a -lzmq

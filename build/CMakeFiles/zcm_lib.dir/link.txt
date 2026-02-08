@@ -1,0 +1,2 @@
+/usr/bin/ar qc libzcm_lib.a CMakeFiles/zcm_lib.dir/src/zcm_core.c.o CMakeFiles/zcm_lib.dir/src/zcm_broker.c.o CMakeFiles/zcm_lib.dir/src/zcm_node.c.o CMakeFiles/zcm_lib.dir/src/zcm_proc.c.o CMakeFiles/zcm_lib.dir/src/zcm_msg.c.o
+/usr/bin/ranlib libzcm_lib.a

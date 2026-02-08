@@ -1,0 +1,1 @@
+/usr/bin/cc -Wl,--dependency-file=CMakeFiles/zcm_msg_fuzz.dir/link.d CMakeFiles/zcm_msg_fuzz.dir/tests/zcm_msg_fuzz.c.o -o zcm_msg_fuzz  libzcm.a -lzmq

@@ -1,0 +1,1 @@
+/usr/bin/cc -Wl,--dependency-file=CMakeFiles/zcm_sub.dir/link.d CMakeFiles/zcm_sub.dir/examples/zcm_sub.c.o -o zcm_sub  libzcm.a -lzmq

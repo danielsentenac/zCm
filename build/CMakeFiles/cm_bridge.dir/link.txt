@@ -1,0 +1,1 @@
+/usr/bin/cc -Wl,--dependency-file=CMakeFiles/cm_bridge.dir/link.d "CMakeFiles/cm_bridge.dir/tools/cm-bridge/cm_bridge.c.o" -o tools/cm_bridge  libzcm_lib.a -lzmq

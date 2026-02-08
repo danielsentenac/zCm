@@ -1,0 +1,1 @@
+/usr/bin/cc -Wl,--dependency-file=CMakeFiles/zcm_broker_main.dir/link.d CMakeFiles/zcm_broker_main.dir/examples/zcm_broker_main.c.o -o zcm_broker_main  libzcm.a -lzmq
