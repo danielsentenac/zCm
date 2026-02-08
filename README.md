@@ -73,46 +73,46 @@ Broker resolution for `zcm` CLI and broker:
 ## Examples
 Start a broker (endpoint via `ZCmDomains`):
 ```bash
-ZCMDOMAIN=virgo ZCMROOT=/path/to/zcmroot ./build/examples/zcm_broker_main
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_broker_main
 ```
 Stop the broker with `Ctrl+C`, or remotely:
 ```bash
-ZCMDOMAIN=virgo ZCMROOT=/path/to/zcmroot ./build/examples/zcm_broker_ctl stop
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_broker_ctl stop
 ```
 Check broker status:
 ```bash
-ZCMDOMAIN=virgo ZCMROOT=/path/to/zcmroot ./build/examples/zcm_broker_ctl ping
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_broker_ctl ping
 ```
 List registered names:
 ```bash
-ZCMDOMAIN=virgo ZCMROOT=/path/to/zcmroot ./build/examples/zcm_broker_ctl list
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_broker_ctl list
 ```
 List via API:
 ```bash
-ZCMDOMAIN=virgo ZCMROOT=/path/to/zcmroot ./build/examples/zcm_list
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_list
 ```
 
 Typed message pub/sub:
 ```bash
-ZCMDOMAIN=virgo ZCMROOT=/path/to/zcmroot ./build/examples/zcm_pub vacuum.pub
-ZCMDOMAIN=virgo ZCMROOT=/path/to/zcmroot ./build/examples/zcm_sub vacuum.pub vacuum.sub
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_pub vacuum.pub
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_sub vacuum.pub vacuum.sub
 ```
 
 Raw bytes pub/sub:
 ```bash
-ZCMDOMAIN=virgo ZCMROOT=/path/to/zcmroot ./build/examples/zcm_bytes_pub vacuum.bytes
-ZCMDOMAIN=virgo ZCMROOT=/path/to/zcmroot ./build/examples/zcm_bytes_sub vacuum.bytes vacuum.bytes.sub
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_bytes_pub vacuum.bytes
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_bytes_sub vacuum.bytes vacuum.bytes.sub
 ```
 
 Process init API:
 ```bash
-ZCMDOMAIN=virgo ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc_example proc.example
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc_example proc.example
 ```
 
 Request/Reply example:
 ```bash
-ZCMDOMAIN=virgo ZCMROOT=/path/to/zcmroot ./build/examples/zcm_rep echo.service
-ZCMDOMAIN=virgo ZCMROOT=/path/to/zcmroot ./build/examples/zcm_req echo.service echo.client
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_rep echo.service
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_req echo.service echo.client
 ```
 
 ## Tests
