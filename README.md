@@ -2,6 +2,34 @@
 
 Lightweight messaging toolkit with a directory-service broker and direct peer-to-peer data paths. The broker maintains the registry (name → endpoint), while applications connect directly to exchange data after lookup. This matches the "broker as a directory service" architecture popularized in ØMQ/ZeroMQ patterns, where the broker handles discovery and peers handle transfer.
 
+## Architecture
+zCm separates discovery from data transfer:
+- **Broker (directory service)**: maintains a registry of `name → endpoint` and answers lookup queries.
+- **Applications (peers)**: register themselves, then connect directly to each other for data exchange.
+
+This keeps the broker lightweight and avoids routing all payloads through a central point. The general flow is:
+1. App A registers its name and endpoint with the broker.
+2. App B queries the broker for App A’s endpoint.
+3. App B connects directly to App A and sends data.
+
+This pattern gives centralized manageability (single place to discover who is running) while keeping high-performance data paths.
+
+Diagram (ASCII):
+```
+   +---------+            +---------+
+   |  App B  |  lookup    | Broker  |
+   +---------+ ---------->+---------+
+        |                     |
+        | endpoint for App A  |
+        <---------------------+
+        |
+        | direct connect + send
+        v
+   +---------+
+   |  App A  |
+   +---------+
+```
+
 ## v0.1 Scope
 - Broker/registry (`zcm-broker`) for name -> endpoint lookup
 - Client API (`zcm-node`) to register and lookup
