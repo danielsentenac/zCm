@@ -11,13 +11,6 @@
 
 #include <zmq.h>
 
-static volatile sig_atomic_t g_broker_stop = 0;
-
-static void handle_sig(int sig) {
-  (void)sig;
-  g_broker_stop = 1;
-}
-
 static void usage(const char *prog) {
   fprintf(stderr,
           "usage:\n"
@@ -25,7 +18,7 @@ static void usage(const char *prog) {
           "  %s send --name NAME -type TYPE -t KIND VALUE\n"
           "  %s kill NAME\n"
           "  %s ping NAME\n"
-          "  %s broker [run|ping|stop|list]\n"
+          "  %s broker [ping|stop|list]\n"
           "\n"
           "KIND: char|short|int|long|float|double|text\n",
           prog, prog, prog, prog, prog);
@@ -372,37 +365,6 @@ out:
   return rc;
 }
 
-static int do_broker_run(const char *endpoint) {
-  int rc = 1;
-  zcm_context_t *ctx = zcm_context_new();
-  zcm_broker_t *broker = NULL;
-
-  if (!ctx) return 1;
-  broker = zcm_broker_start(ctx, endpoint);
-  if (!broker) {
-    fprintf(stderr, "zcm: broker start failed\n");
-    goto out;
-  }
-
-  g_broker_stop = 0;
-  signal(SIGINT, handle_sig);
-  signal(SIGTERM, handle_sig);
-
-  printf("zcm-broker listening on %s (Ctrl+C to stop)\n", endpoint);
-  fflush(stdout);
-
-  while (!g_broker_stop && zcm_broker_is_running(broker)) {
-    sleep(1);
-  }
-
-  rc = 0;
-
-out:
-  if (broker) zcm_broker_stop(broker);
-  zcm_context_free(ctx);
-  return rc;
-}
-
 static int parse_send_args(int argc, char **argv,
                            const char **name,
                            const char **type,
@@ -468,13 +430,8 @@ int main(int argc, char **argv) {
     }
     name = argv[2];
   } else if (strcmp(cmd, "broker") == 0) {
-    sub = (argc >= 3) ? argv[2] : "run";
-    if (strcmp(sub, "run") == 0) {
-      if (!(argc == 2 || argc == 3)) {
-        usage(argv[0]);
-        return 1;
-      }
-    } else if (strcmp(sub, "ping") == 0 || strcmp(sub, "stop") == 0 || strcmp(sub, "list") == 0) {
+    sub = (argc >= 3) ? argv[2] : NULL;
+    if (sub && (strcmp(sub, "ping") == 0 || strcmp(sub, "stop") == 0 || strcmp(sub, "list") == 0)) {
       if (argc != 3) {
         usage(argv[0]);
         return 1;
@@ -503,8 +460,6 @@ int main(int argc, char **argv) {
     rc = do_kill(endpoint, name);
   } else if (strcmp(cmd, "ping") == 0) {
     rc = do_ping(endpoint, name);
-  } else if (strcmp(sub, "run") == 0) {
-    rc = do_broker_run(endpoint);
   } else if (strcmp(sub, "ping") == 0) {
     rc = do_broker_cmd(endpoint, "PING", "PONG");
   } else if (strcmp(sub, "stop") == 0) {

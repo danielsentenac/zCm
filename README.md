@@ -74,7 +74,7 @@ Ping a registered process (control REQ/REP):
 ```
 Run broker main loop:
 ```bash
-./build/tools/zcm broker run
+./build/tools/zcm_broker
 ```
 Check broker status:
 ```bash
@@ -104,7 +104,7 @@ Broker resolution for `zcm` CLI and broker:
 ## Examples
 Start a broker (endpoint via `ZCmDomains`):
 ```bash
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm broker run
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm_broker
 ```
 Stop the broker with `Ctrl+C`, or remotely:
 ```bash

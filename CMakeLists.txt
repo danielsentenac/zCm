@@ -123,6 +123,12 @@ if(ZCM_BUILD_TOOLS)
   set_target_properties(zcm PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${ZCM_TOOL_OUTPUT_DIR}
   )
+
+  add_executable(zcm_broker tools/zcm/zcm_broker.c)
+  target_link_libraries(zcm_broker PRIVATE zcm_lib)
+  set_target_properties(zcm_broker PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${ZCM_TOOL_OUTPUT_DIR}
+  )
 endif()
 
 add_custom_target(test-verbose
