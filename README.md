@@ -79,6 +79,7 @@ Send a typed core message:
 ./build/tools/zcm send NAME -f 3.14
 ./build/tools/zcm send NAME -d 2.718281828
 ./build/tools/zcm send NAME -type CustomType -t "hello"
+./build/tools/zcm send basic -type QUERY -d 5 -d 7 -t action -d 0
 ```
 Run broker main loop:
 ```bash
@@ -109,7 +110,9 @@ Process config at init (required):
 - `<runtime @mode>` selects behavior (`daemon`, `pub-msg`, `sub-msg`, `pub-bytes`, `sub-bytes`, `req`).
 - Optional `<handlers>` adds daemon reply rules:
   - `<core pingRequest=... pingReply=... defaultReply=...>`
-  - repeated `<type name=... reply=...>`
+  - repeated `<type name=... reply=...><arg kind=.../>...</type>` with ordered payload args
+  - malformed TYPE requests are rejected with `ERROR` and expected TYPE format
+  - `zcm send` preserves the exact order of repeated `-t/-d/-f/-i` flags
 - Examples: `data/basic.cfg`, `docs/config/coco.cfg`, `docs/config/zcmproc.cfg`
 
 Broker resolution for `zcm` CLI and broker:

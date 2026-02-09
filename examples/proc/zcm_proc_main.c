@@ -18,10 +18,21 @@
 #endif
 
 #define ZCM_TYPE_HANDLER_MAX 32
+#define ZCM_TYPE_HANDLER_ARG_MAX 32
+
+typedef enum type_arg_kind {
+  TYPE_ARG_TEXT = 1,
+  TYPE_ARG_DOUBLE = 2,
+  TYPE_ARG_FLOAT = 3,
+  TYPE_ARG_INT = 4
+} type_arg_kind_t;
 
 typedef struct type_handler_cfg {
   char name[64];
   char reply[128];
+  type_arg_kind_t args[ZCM_TYPE_HANDLER_ARG_MAX];
+  size_t arg_count;
+  char format[256];
 } type_handler_cfg_t;
 
 typedef struct runtime_cfg {
@@ -141,6 +152,50 @@ static int run_xmllint_xpath(const char *config_path, const char *xpath_expr,
   return 0;
 }
 
+static int parse_type_arg_kind(const char *text, type_arg_kind_t *out) {
+  if (!text || !*text || !out) return -1;
+  if (strcasecmp(text, "text") == 0) { *out = TYPE_ARG_TEXT; return 0; }
+  if (strcasecmp(text, "double") == 0) { *out = TYPE_ARG_DOUBLE; return 0; }
+  if (strcasecmp(text, "float") == 0) { *out = TYPE_ARG_FLOAT; return 0; }
+  if (strcasecmp(text, "int") == 0) { *out = TYPE_ARG_INT; return 0; }
+  return -1;
+}
+
+static const char *type_arg_kind_name(type_arg_kind_t kind) {
+  switch (kind) {
+    case TYPE_ARG_TEXT: return "text";
+    case TYPE_ARG_DOUBLE: return "double";
+    case TYPE_ARG_FLOAT: return "float";
+    case TYPE_ARG_INT: return "int";
+    default: return "unknown";
+  }
+}
+
+static void build_type_format(type_handler_cfg_t *handler) {
+  if (!handler) return;
+  size_t off = 0;
+  int n = snprintf(handler->format, sizeof(handler->format), "%s(", handler->name);
+  if (n < 0) return;
+  if ((size_t)n >= sizeof(handler->format)) {
+    handler->format[sizeof(handler->format) - 1] = '\0';
+    return;
+  }
+  off = (size_t)n;
+
+  for (size_t i = 0; i < handler->arg_count; i++) {
+    n = snprintf(handler->format + off, sizeof(handler->format) - off,
+                 "%s%s", (i == 0) ? "" : ",", type_arg_kind_name(handler->args[i]));
+    if (n < 0) return;
+    if ((size_t)n >= sizeof(handler->format) - off) {
+      handler->format[sizeof(handler->format) - 1] = '\0';
+      return;
+    }
+    off += (size_t)n;
+  }
+
+  snprintf(handler->format + off, sizeof(handler->format) - off, ")");
+}
+
 static int load_type_handlers(const char *cfg_path, runtime_cfg_t *cfg) {
   if (!cfg_path || !cfg) return -1;
   cfg->type_handler_count = 0;
@@ -166,8 +221,33 @@ static int load_type_handlers(const char *cfg_path, runtime_cfg_t *cfg) {
     }
 
     size_t idx = cfg->type_handler_count;
-    snprintf(cfg->type_handlers[idx].name, sizeof(cfg->type_handlers[idx].name), "%s", name);
-    snprintf(cfg->type_handlers[idx].reply, sizeof(cfg->type_handlers[idx].reply), "%s", reply);
+    type_handler_cfg_t *handler = &cfg->type_handlers[idx];
+    memset(handler, 0, sizeof(*handler));
+    snprintf(handler->name, sizeof(handler->name), "%s", name);
+    snprintf(handler->reply, sizeof(handler->reply), "%s", reply);
+
+    for (int j = 1; j <= ZCM_TYPE_HANDLER_ARG_MAX; j++) {
+      char kind_text[32] = {0};
+      if (snprintf(xpath, sizeof(xpath), "string(/procConfig/process/handlers/type[%d]/arg[%d]/@kind)", i, j) >= (int)sizeof(xpath)) {
+        return -1;
+      }
+      if (run_xmllint_xpath(cfg_path, xpath, kind_text, sizeof(kind_text)) != 0 || !kind_text[0]) {
+        break;
+      }
+
+      type_arg_kind_t kind;
+      if (parse_type_arg_kind(kind_text, &kind) != 0) {
+        fprintf(stderr, "zcm_proc: invalid handlers/type[%d]/arg[%d]@kind in %s\n", i, j, cfg_path);
+        return -1;
+      }
+      if (handler->arg_count >= ZCM_TYPE_HANDLER_ARG_MAX) {
+        fprintf(stderr, "zcm_proc: too many args in handlers/type[%d] (max=%d)\n", i, ZCM_TYPE_HANDLER_ARG_MAX);
+        return -1;
+      }
+      handler->args[handler->arg_count++] = kind;
+    }
+
+    build_type_format(handler);
     cfg->type_handler_count++;
   }
 
@@ -278,14 +358,78 @@ static int text_equals_nocase(const char *text, uint32_t len, const char *lit) {
   return strncasecmp(text, lit, n) == 0;
 }
 
-static const char *lookup_type_reply(const runtime_cfg_t *cfg, const char *type_name) {
+static const type_handler_cfg_t *lookup_type_handler(const runtime_cfg_t *cfg, const char *type_name) {
   if (!cfg || !type_name || !*type_name) return NULL;
   for (size_t i = 0; i < cfg->type_handler_count; i++) {
     if (strcasecmp(cfg->type_handlers[i].name, type_name) == 0) {
-      return cfg->type_handlers[i].reply;
+      return &cfg->type_handlers[i];
     }
   }
   return NULL;
+}
+
+static int append_summary(char *buf, size_t buf_size, size_t *off, const char *text) {
+  if (!buf || buf_size == 0 || !off || !text) return -1;
+  if (*off >= buf_size) return -1;
+  int n = snprintf(buf + *off, buf_size - *off, "%s", text);
+  if (n < 0) return -1;
+  if ((size_t)n >= buf_size - *off) {
+    *off = buf_size - 1;
+    buf[*off] = '\0';
+    return -1;
+  }
+  *off += (size_t)n;
+  return 0;
+}
+
+static int decode_type_payload(zcm_msg_t *msg, const type_handler_cfg_t *handler,
+                               char *summary, size_t summary_size) {
+  if (!msg || !handler || !summary || summary_size == 0) return -1;
+  summary[0] = '\0';
+  size_t off = 0;
+  zcm_msg_rewind(msg);
+
+  for (size_t i = 0; i < handler->arg_count; i++) {
+    if (i > 0) (void)append_summary(summary, summary_size, &off, ", ");
+
+    if (handler->args[i] == TYPE_ARG_TEXT) {
+      const char *text = NULL;
+      uint32_t text_len = 0;
+      if (zcm_msg_get_text(msg, &text, &text_len) != 0) return -1;
+      char item[256];
+      snprintf(item, sizeof(item), "text=%.*s", (int)text_len, text);
+      (void)append_summary(summary, summary_size, &off, item);
+      continue;
+    }
+    if (handler->args[i] == TYPE_ARG_DOUBLE) {
+      double v = 0.0;
+      if (zcm_msg_get_double(msg, &v) != 0) return -1;
+      char item[96];
+      snprintf(item, sizeof(item), "double=%f", v);
+      (void)append_summary(summary, summary_size, &off, item);
+      continue;
+    }
+    if (handler->args[i] == TYPE_ARG_FLOAT) {
+      float v = 0.0f;
+      if (zcm_msg_get_float(msg, &v) != 0) return -1;
+      char item[96];
+      snprintf(item, sizeof(item), "float=%f", v);
+      (void)append_summary(summary, summary_size, &off, item);
+      continue;
+    }
+    if (handler->args[i] == TYPE_ARG_INT) {
+      int32_t v = 0;
+      if (zcm_msg_get_int(msg, &v) != 0) return -1;
+      char item[96];
+      snprintf(item, sizeof(item), "int=%d", v);
+      (void)append_summary(summary, summary_size, &off, item);
+      continue;
+    }
+    return -1;
+  }
+
+  if (zcm_msg_remaining(msg) != 0) return -1;
+  return 0;
 }
 
 static int run_pub_msg(const char *name, int count) {
@@ -461,18 +605,42 @@ static int run_daemon(const runtime_cfg_t *cfg) {
       zcm_proc_free(proc);
       return 1;
     }
+    if (zcm_socket_recv_msg(rep, req) != 0) {
+      zcm_msg_free(req);
+      continue;
+    }
+
+    int32_t req_code = 200;
+    int malformed = 0;
     const char *cmd = NULL;
     uint32_t cmd_len = 0;
-    int32_t req_code = 200;
-    int core_request = 0;
-    const char *req_type = "";
-    if (zcm_socket_recv_msg(rep, req) == 0) {
-      req_type = zcm_msg_get_type(req);
-      if (!req_type) req_type = "";
+    const char *req_type = zcm_msg_get_type(req);
+    char err_text[512] = {0};
+    char parsed_summary[512] = {0};
+    const char *reply_text = cfg->core_default_reply;
+    int reply_as_core = 0;
+
+    if (!req_type) req_type = "";
+
+    const type_handler_cfg_t *handler = lookup_type_handler(cfg, req_type);
+    if (handler) {
+      if (decode_type_payload(req, handler, parsed_summary, sizeof(parsed_summary)) != 0) {
+        malformed = 1;
+        req_code = 400;
+        snprintf(err_text, sizeof(err_text),
+                 "ERR malformed %s expected %s", req_type, handler->format);
+        reply_text = err_text;
+        printf("received query malformed: type=%s expected=%s\n", req_type, handler->format);
+      } else {
+        reply_text = handler->reply;
+        printf("received query: type=%s %s\n",
+               req_type, parsed_summary[0] ? parsed_summary : "<no-args>");
+      }
+    } else {
       zcm_core_value_t core;
       zcm_msg_rewind(req);
-      if (zcm_msg_get_core(req, &core) == 0) {
-        core_request = 1;
+      if (zcm_msg_get_core(req, &core) == 0 && zcm_msg_remaining(req) == 0) {
+        reply_as_core = 1;
         if (core.kind == ZCM_CORE_VALUE_TEXT) {
           cmd = core.text;
           cmd_len = core.text_len;
@@ -486,46 +654,48 @@ static int run_daemon(const runtime_cfg_t *cfg) {
         }
       } else {
         zcm_msg_rewind(req);
-        if (zcm_msg_get_text(req, &cmd, &cmd_len) != 0) {
-          cmd = NULL;
-          cmd_len = 0;
+        if (zcm_msg_get_text(req, &cmd, &cmd_len) == 0 &&
+            zcm_msg_get_int(req, &req_code) == 0 &&
+            zcm_msg_remaining(req) == 0) {
+          printf("received query: type=%s cmd=%.*s\n", req_type, (int)cmd_len, cmd);
+        } else {
+          malformed = 1;
+          req_code = 400;
+          snprintf(err_text, sizeof(err_text), "ERR malformed request for type %s", req_type[0] ? req_type : "<none>");
+          reply_text = err_text;
+          reply_as_core = 0;
+          printf("received query malformed: type=%s\n", req_type[0] ? req_type : "<none>");
         }
-        if (zcm_msg_get_int(req, &req_code) != 0) {
-          req_code = 200;
+      }
+
+      if (!malformed) {
+        if (cmd && text_equals_nocase(cmd, cmd_len, cfg->core_ping_request)) {
+          reply_text = cfg->core_ping_reply;
+        } else {
+          reply_text = cfg->core_default_reply;
         }
-        printf("received query: type=%s cmd=%s\n", req_type, cmd ? cmd : "<none>");
       }
     }
-    zcm_msg_free(req);
 
     zcm_msg_t *reply = zcm_msg_new();
     if (!reply) {
+      zcm_msg_free(req);
       zcm_proc_free(proc);
       return 1;
     }
-    zcm_msg_set_type(reply, "REPLY");
-    const char *reply_text = "ERR";
-    const char *type_reply = lookup_type_reply(cfg, req_type);
-    if (type_reply) {
-      reply_text = type_reply;
-    } else if (cmd && text_equals_nocase(cmd, cmd_len, cfg->core_ping_request)) {
-      reply_text = cfg->core_ping_reply;
-    } else if (core_request) {
-      reply_text = cfg->core_default_reply;
-    } else if (cmd && cmd_len > 0) {
-      reply_text = cfg->core_default_reply;
-    }
-
-    if (core_request) zcm_msg_put_core_text(reply, reply_text);
+    zcm_msg_set_type(reply, malformed ? "ERROR" : "REPLY");
+    if (reply_as_core && !malformed) zcm_msg_put_core_text(reply, reply_text);
     else zcm_msg_put_text(reply, reply_text);
     zcm_msg_put_int(reply, req_code);
     if (zcm_socket_send_msg(rep, reply) != 0) {
       fprintf(stderr, "reply send failed\n");
       zcm_msg_free(reply);
+      zcm_msg_free(req);
       zcm_proc_free(proc);
       return 1;
     }
     zcm_msg_free(reply);
+    zcm_msg_free(req);
   }
 
   zcm_proc_free(proc);

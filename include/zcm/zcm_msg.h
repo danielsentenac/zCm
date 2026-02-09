@@ -360,6 +360,14 @@ int zcm_msg_get_core(zcm_msg_t *msg, zcm_core_value_t *out);
 const void *zcm_msg_data(const zcm_msg_t *msg, size_t *len);
 
 /**
+ * @brief Get unread payload bytes remaining from current read cursor.
+ *
+ * @param msg Message to inspect.
+ * @return Remaining unread payload bytes.
+ */
+size_t zcm_msg_remaining(const zcm_msg_t *msg);
+
+/**
  * @brief Load message state from serialized envelope bytes.
  *
  * @param msg Destination message to populate.

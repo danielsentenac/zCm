@@ -15,7 +15,7 @@ static void usage(const char *prog) {
   fprintf(stderr,
           "usage:\n"
           "  %s names\n"
-          "  %s send NAME [-type TYPE] (-t TEXT | -d DOUBLE | -f FLOAT | -i INTEGER)\n"
+          "  %s send NAME [-type TYPE] (-t TEXT | -d DOUBLE | -f FLOAT | -i INTEGER)+\n"
           "  %s kill NAME\n"
           "  %s ping NAME\n"
           "  %s broker [ping|stop|list]\n",
@@ -135,6 +135,13 @@ typedef enum {
   SEND_VALUE_INT = 4
 } send_value_kind_t;
 
+typedef struct send_value {
+  send_value_kind_t kind;
+  const char *value;
+} send_value_t;
+
+#define SEND_VALUE_MAX 64
+
 static int parse_int32_str(const char *text, int32_t *out) {
   if (!text || !out) return -1;
   char *end = NULL;
@@ -163,25 +170,25 @@ static int parse_double_str(const char *text, double *out) {
   return 0;
 }
 
-static int set_core_payload(zcm_msg_t *msg, send_value_kind_t kind, const char *value) {
+static int set_payload_value(zcm_msg_t *msg, send_value_kind_t kind, const char *value, int core_mode) {
   if (!msg || !value) return -1;
   switch (kind) {
     case SEND_VALUE_TEXT:
-      return zcm_msg_put_core_text(msg, value);
+      return core_mode ? zcm_msg_put_core_text(msg, value) : zcm_msg_put_text(msg, value);
     case SEND_VALUE_DOUBLE: {
       double v = 0.0;
       if (parse_double_str(value, &v) != 0) return -1;
-      return zcm_msg_put_core_double(msg, v);
+      return core_mode ? zcm_msg_put_core_double(msg, v) : zcm_msg_put_double(msg, v);
     }
     case SEND_VALUE_FLOAT: {
       float v = 0.0f;
       if (parse_float_str(value, &v) != 0) return -1;
-      return zcm_msg_put_core_float(msg, v);
+      return core_mode ? zcm_msg_put_core_float(msg, v) : zcm_msg_put_float(msg, v);
     }
     case SEND_VALUE_INT: {
       int32_t v = 0;
       if (parse_int32_str(value, &v) != 0) return -1;
-      return zcm_msg_put_core_int(msg, v);
+      return core_mode ? zcm_msg_put_core_int(msg, v) : zcm_msg_put_int(msg, v);
     }
     default:
       return -1;
@@ -189,7 +196,7 @@ static int set_core_payload(zcm_msg_t *msg, send_value_kind_t kind, const char *
 }
 
 static int do_send(const char *endpoint, const char *name, const char *type,
-                   send_value_kind_t kind, const char *value) {
+                   const send_value_t *values, size_t value_count) {
   int rc = 1;
   zcm_context_t *ctx = zcm_context_new();
   zcm_node_t *node = NULL;
@@ -218,9 +225,16 @@ static int do_send(const char *endpoint, const char *name, const char *type,
   msg = zcm_msg_new();
   if (!msg) goto out;
   zcm_msg_set_type(msg, type);
-  if (set_core_payload(msg, kind, value) != 0) {
-    fprintf(stderr, "zcm: invalid payload value for selected flag\n");
+  int core_mode = (strcmp(type, "CORE") == 0);
+  if (core_mode && value_count != 1) {
+    fprintf(stderr, "zcm: CORE type expects exactly one value flag\n");
     goto out;
+  }
+  for (size_t i = 0; i < value_count; i++) {
+    if (set_payload_value(msg, values[i].kind, values[i].value, core_mode) != 0) {
+      fprintf(stderr, "zcm: invalid payload value at position %zu\n", i + 1);
+      goto out;
+    }
   }
 
   if (zcm_socket_send_msg(req, msg) != 0) {
@@ -252,9 +266,14 @@ static int do_send(const char *endpoint, const char *name, const char *type,
   } else {
     const char *text = NULL;
     uint32_t text_len = 0;
+    int32_t code = 0;
     zcm_msg_rewind(reply);
     if (zcm_msg_get_text(reply, &text, &text_len) == 0) {
-      printf("ack %s %.*s\n", zcm_msg_get_type(reply), (int)text_len, text);
+      if (zcm_msg_get_int(reply, &code) == 0 && zcm_msg_remaining(reply) == 0) {
+        printf("ack %s %.*s code=%d\n", zcm_msg_get_type(reply), (int)text_len, text, code);
+      } else {
+        printf("ack %s %.*s\n", zcm_msg_get_type(reply), (int)text_len, text);
+      }
     } else {
       printf("ack %s\n", zcm_msg_get_type(reply));
     }
@@ -434,13 +453,12 @@ out:
 static int parse_send_args(int argc, char **argv,
                            const char **name,
                            const char **type,
-                           send_value_kind_t *kind,
-                           const char **value) {
+                           send_value_t *values,
+                           size_t *value_count) {
   if (argc < 3) return -1;
   *name = argv[2];
   *type = "CORE";
-  *kind = SEND_VALUE_NONE;
-  *value = NULL;
+  *value_count = 0;
 
   for (int i = 3; i < argc; i++) {
     if (strcmp(argv[i], "-type") == 0 && i + 1 < argc) {
@@ -449,18 +467,20 @@ static int parse_send_args(int argc, char **argv,
                 strcmp(argv[i], "-d") == 0 ||
                 strcmp(argv[i], "-f") == 0 ||
                 strcmp(argv[i], "-i") == 0) && i + 1 < argc) {
-      if (*kind != SEND_VALUE_NONE || *value != NULL) return -1;
-      if (strcmp(argv[i], "-t") == 0) *kind = SEND_VALUE_TEXT;
-      else if (strcmp(argv[i], "-d") == 0) *kind = SEND_VALUE_DOUBLE;
-      else if (strcmp(argv[i], "-f") == 0) *kind = SEND_VALUE_FLOAT;
-      else *kind = SEND_VALUE_INT;
-      *value = argv[++i];
+      if (*value_count >= SEND_VALUE_MAX) return -1;
+      send_value_t *slot = &values[*value_count];
+      if (strcmp(argv[i], "-t") == 0) slot->kind = SEND_VALUE_TEXT;
+      else if (strcmp(argv[i], "-d") == 0) slot->kind = SEND_VALUE_DOUBLE;
+      else if (strcmp(argv[i], "-f") == 0) slot->kind = SEND_VALUE_FLOAT;
+      else slot->kind = SEND_VALUE_INT;
+      slot->value = argv[++i];
+      (*value_count)++;
     } else {
       return -1;
     }
   }
 
-  return (*name && *kind != SEND_VALUE_NONE && *value) ? 0 : -1;
+  return (*name && *value_count > 0) ? 0 : -1;
 }
 
 int main(int argc, char **argv) {
@@ -468,8 +488,8 @@ int main(int argc, char **argv) {
   const char *sub = NULL;
   const char *name = NULL;
   const char *type = NULL;
-  send_value_kind_t kind = SEND_VALUE_NONE;
-  const char *value = NULL;
+  send_value_t values[SEND_VALUE_MAX];
+  size_t value_count = 0;
 
   if (argc < 2) {
     usage(argv[0]);
@@ -484,7 +504,7 @@ int main(int argc, char **argv) {
       return 1;
     }
   } else if (strcmp(cmd, "send") == 0) {
-    if (parse_send_args(argc, argv, &name, &type, &kind, &value) != 0) {
+    if (parse_send_args(argc, argv, &name, &type, values, &value_count) != 0) {
       usage(argv[0]);
       return 1;
     }
@@ -526,7 +546,7 @@ int main(int argc, char **argv) {
   if (strcmp(cmd, "names") == 0) {
     rc = do_names_with_timeout(endpoint, 2000);
   } else if (strcmp(cmd, "send") == 0) {
-    rc = do_send(endpoint, name, type, kind, value);
+    rc = do_send(endpoint, name, type, values, value_count);
   } else if (strcmp(cmd, "kill") == 0) {
     rc = do_kill(endpoint, name);
   } else if (strcmp(cmd, "ping") == 0) {

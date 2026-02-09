@@ -40,11 +40,17 @@ Runtime attributes:
 
 Handlers:
 - `<handlers><core .../></handlers>` configures CORE request handling.
-- `<handlers><type name="..." reply="..."/></handlers>` adds TYPE-specific replies.
+- `<handlers><type name="..." reply="..."><arg kind="..."/>...</type></handlers>` defines
+  a strict ordered payload format for that TYPE.
+- Supported arg kinds: `text`, `double`, `float`, `int`.
+- `zcm send` keeps value flag order exactly as written (`-t/-d/-f/-i` sequence).
 - Reply selection order in daemon/rep:
   1. matching TYPE handler
   2. CORE ping handler (`pingRequest -> pingReply`)
   3. CORE default reply (`defaultReply`)
+- If a TYPE request payload does not match its declared arg sequence, the proc
+  replies with `ERROR` and includes the expected format (example:
+  `ERR malformed QUERY expected QUERY(double,double,text,double)`).
 
 ## Examples
 Daemon (`PING -> PONG`):
@@ -57,7 +63,9 @@ Daemon (`PING -> PONG`):
     <control timeoutMs="200"/>
     <handlers>
       <core pingRequest="PING" pingReply="PONG" defaultReply="OK"/>
-      <type name="ALARM" reply="ALARM_ACK"/>
+      <type name="ALARM" reply="ALARM_ACK">
+        <arg kind="double"/>
+      </type>
     </handlers>
   </process>
 </procConfig>
@@ -68,6 +76,11 @@ Run:
 ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc docs/config/coco.cfg
 ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm ping coco
 ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm send coco -t "hello"
+```
+
+Ordered TYPE payload example:
+```bash
+./build/tools/zcm send basic -type QUERY -d 5 -d 7 -t action -d 0
 ```
 
 Message publisher:

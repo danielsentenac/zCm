@@ -543,6 +543,12 @@ const void *zcm_msg_data(const zcm_msg_t *msg, size_t *len) {
   return msg->buf;
 }
 
+size_t zcm_msg_remaining(const zcm_msg_t *msg) {
+  if (!msg) return 0;
+  if (msg->read_off >= msg->len) return 0;
+  return msg->len - msg->read_off;
+}
+
 int zcm_msg_from_bytes(zcm_msg_t *msg, const void *data, size_t len) {
   if (!msg || !data || len < 12) return ZCM_MSG_ERR_FORMAT;
   const uint8_t *p = (const uint8_t *)data;

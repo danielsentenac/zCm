@@ -24,6 +24,22 @@
     <xs:attribute name="defaultReply" type="xs:string" use="optional"/>
   </xs:complexType>
   <xs:complexType name="typeHandlerType">
+    <xs:sequence>
+      <xs:element name="arg" minOccurs="0" maxOccurs="32">
+        <xs:complexType>
+          <xs:attribute name="kind" use="required">
+            <xs:simpleType>
+              <xs:restriction base="xs:string">
+                <xs:enumeration value="text"/>
+                <xs:enumeration value="double"/>
+                <xs:enumeration value="float"/>
+                <xs:enumeration value="int"/>
+              </xs:restriction>
+            </xs:simpleType>
+          </xs:attribute>
+        </xs:complexType>
+      </xs:element>
+    </xs:sequence>
     <xs:attribute name="name" type="xs:string" use="required"/>
     <xs:attribute name="reply" type="xs:string" use="required"/>
   </xs:complexType>
