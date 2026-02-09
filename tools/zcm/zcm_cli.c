@@ -13,11 +13,10 @@ static void usage(const char *prog) {
           "usage:\n"
           "  %s names\n"
           "  %s send --name NAME -type TYPE -t KIND VALUE\n"
-          "  %s kill --name NAME\n"
           "  %s kill NAME\n"
           "\n"
           "KIND: char|short|int|long|float|double|text\n",
-          prog, prog, prog, prog);
+          prog, prog, prog);
 }
 
 static char *load_endpoint_from_config(void) {
@@ -262,6 +261,10 @@ int main(int argc, char **argv) {
     if (!cmd) {
       cmd = argv[i];
     } else if (strcmp(argv[i], "--name") == 0 && i + 1 < argc) {
+      if (strcmp(cmd, "send") != 0) {
+        usage(argv[0]);
+        return 1;
+      }
       name = argv[++i];
     } else if (strcmp(argv[i], "-type") == 0 && i + 1 < argc) {
       type = argv[++i];
@@ -294,6 +297,11 @@ int main(int argc, char **argv) {
 
   int rc = 0;
   if (strcmp(cmd, "names") == 0) {
+    if (name || type || kind || value) {
+      usage(argv[0]);
+      free(ep);
+      return 1;
+    }
     rc = do_names_with_timeout(ep, 2000);
     if (rc != 0) {
       free(ep);
@@ -307,7 +315,7 @@ int main(int argc, char **argv) {
     }
     rc = do_send(ep, name, type, kind, value);
   } else {
-    if (!name) {
+    if (!name || type || kind || value) {
       usage(argv[0]);
       free(ep);
       return 1;

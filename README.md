@@ -62,7 +62,7 @@ List registered processes:
 ```
 Kill (shutdown) a registered process:
 ```bash
-./build/tools/zcm kill --name NAME
+./build/tools/zcm kill NAME
 ```
 Unified process example:
 ```bash
