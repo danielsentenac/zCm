@@ -14,3 +14,6 @@
 
 # temporary excludes
 /tools/cm-bridge/
+
+# generated documentation
+/docs/_build/
