@@ -49,19 +49,6 @@ cmake --build build --target test-verbose
 ```
 
 ## Documentation
-Generate API documentation locally with Doxygen:
-```bash
-doxygen Doxyfile
-./tools/doxygen/postprocess-awesome.sh docs/_build/html
-```
-Generated HTML:
-```bash
-docs/_build/html/index.html
-```
-
-GitHub Pages deployment is automated by `.github/workflows/doxygen-gh-pages.yml`.
-On every push to `master`/`main` (or manual workflow dispatch), docs are regenerated and published to the `gh-pages` branch.
-Set repository Pages source to branch `gh-pages` (root) to serve the generated site.
 Published docs: https://danielsentenac.github.io/zCm/
 
 ## Tools
