@@ -7,7 +7,7 @@
 #include <unistd.h>
 
 int main(int argc, char **argv) {
-  const char *name = "proc.example";
+  const char *name = "procexample";
   if (argc > 1) name = argv[1];
 
   zcm_proc_t *proc = NULL;

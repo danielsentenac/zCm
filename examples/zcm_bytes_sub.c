@@ -5,8 +5,8 @@
 #include <stdio.h>
 
 int main(int argc, char **argv) {
-  const char *target = "vacuum.bytes";
-  const char *self_name = "vacuum.bytes.sub";
+  const char *target = "procbytes";
+  const char *self_name = "procbytesub";
   if (argc > 1) target = argv[1];
   if (argc > 2) self_name = argv[2];
 

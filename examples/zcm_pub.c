@@ -7,7 +7,7 @@
 #include <unistd.h>
 
 int main(int argc, char **argv) {
-  const char *name = "vacuum.pub";
+  const char *name = "procpub";
   if (argc > 1) name = argv[1];
 
   zcm_proc_t *proc = NULL;
@@ -17,7 +17,7 @@ int main(int argc, char **argv) {
 
   for (int i = 0; i < 5; i++) {
     zcm_msg_t *msg = zcm_msg_new();
-    zcm_msg_set_type(msg, "VacuumStatus");
+    zcm_msg_set_type(msg, "ProcStatus");
     zcm_msg_put_int(msg, i);
     zcm_msg_put_text(msg, "pump_ok");
 

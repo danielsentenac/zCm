@@ -62,7 +62,7 @@ Kill (shutdown) a registered process:
 ```
 Process initialization (register + control endpoint):
 ```bash
-./build/examples/zcm_proc_example proc.example
+./build/examples/zcm_proc_example procexample
 ```
 
 Broker resolution for `zcm` CLI and broker:
@@ -97,25 +97,25 @@ ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_list
 
 Typed message pub/sub:
 ```bash
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_pub vacuum.pub
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_sub vacuum.pub vacuum.sub
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_pub procpub
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_sub procpub procsub
 ```
 
 Raw bytes pub/sub:
 ```bash
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_bytes_pub vacuum.bytes
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_bytes_sub vacuum.bytes vacuum.bytes.sub
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_bytes_pub procbytes
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_bytes_sub procbytes procbytesub
 ```
 
 Process init API:
 ```bash
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc_example proc.example
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc_example procexample
 ```
 
 Request/Reply example:
 ```bash
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_rep echo.service
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_req echo.service echo.client
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_rep echoservice
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_req echoservice echoclient
 ```
 
 ## Tests

@@ -23,7 +23,7 @@ int main(void) {
     return 1;
   }
 
-  if (zcm_node_register(node, "vacuum", "tcp://127.0.0.1:5555") != 0) {
+  if (zcm_node_register(node, "proc", "tcp://127.0.0.1:5555") != 0) {
     zcm_node_free(node);
     zcm_broker_stop(broker);
     zcm_context_free(ctx);
@@ -32,7 +32,7 @@ int main(void) {
 
   printf("zcm_smoke: lookup name and verify endpoint\n");
   char ep[256] = {0};
-  if (zcm_node_lookup(node, "vacuum", ep, sizeof(ep)) != 0) {
+  if (zcm_node_lookup(node, "proc", ep, sizeof(ep)) != 0) {
     zcm_node_free(node);
     zcm_broker_stop(broker);
     zcm_context_free(ctx);

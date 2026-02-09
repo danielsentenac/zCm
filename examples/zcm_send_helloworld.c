@@ -8,7 +8,7 @@
 
 int main(int argc, char **argv) {
   const char *target = "helloworld";
-  const char *self_name = "helloworld.send";
+  const char *self_name = "helloworldsend";
   if (argc > 1) target = argv[1];
   if (argc > 2) self_name = argv[2];
 

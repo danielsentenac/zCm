@@ -7,8 +7,8 @@
 #include <unistd.h>
 
 int main(int argc, char **argv) {
-  const char *service = "echo.service";
-  const char *self_name = "echo.client";
+  const char *service = "echoservice";
+  const char *self_name = "echoclient";
   int count = 1;
   if (argc > 1) service = argv[1];
   if (argc > 2) self_name = argv[2];

@@ -282,7 +282,7 @@ zcm_broker_t *zcm_broker_start(zcm_context_t *ctx, const char *endpoint) {
   b->endpoint = strdup(endpoint);
   if (!b->endpoint) { free(b); return NULL; }
   /* Always register the broker itself so names list is never empty. */
-  entry_set(b, "zcm.broker", b->endpoint);
+  entry_set(b, "zcmbroker", b->endpoint);
   b->running = 1;
   if (pthread_create(&b->thread, NULL, broker_thread, b) != 0) {
     free(b->endpoint);

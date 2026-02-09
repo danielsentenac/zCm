@@ -6,8 +6,8 @@
 #include <stdio.h>
 
 int main(int argc, char **argv) {
-  const char *target = "vacuum.pub";
-  const char *self_name = "vacuum.sub";
+  const char *target = "procpub";
+  const char *self_name = "procsub";
   if (argc > 1) target = argv[1];
   if (argc > 2) self_name = argv[2];
 
