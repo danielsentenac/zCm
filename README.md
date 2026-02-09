@@ -60,9 +60,9 @@ Kill (shutdown) a registered process:
 ```bash
 ./build/tools/zcm kill --name NAME
 ```
-Process initialization (register + control endpoint):
+Unified process example:
 ```bash
-./build/examples/zcm_proc_example procexample
+./build/examples/zcm_proc pub-msg procpub 5
 ```
 
 Broker resolution for `zcm` CLI and broker:
@@ -95,27 +95,22 @@ List via API:
 ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_list
 ```
 
-Typed message pub/sub:
+Unified `zcm_proc` modes:
 ```bash
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_pub procpub
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_sub procpub procsub
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc pub-msg procpub 5
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc sub-msg procpub procsub 5
 ```
 
-Raw bytes pub/sub:
+Raw bytes with the same unified process:
 ```bash
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_bytes_pub procbytes
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_bytes_sub procbytes procbytesub
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc pub-bytes procbytes 5 raw-bytes-proc
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc sub-bytes procbytes procbytesub 5
 ```
 
-Process init API:
+Request/Reply with the same unified process:
 ```bash
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc_example procexample
-```
-
-Request/Reply example:
-```bash
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_rep echoservice
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_req echoservice echoclient
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc rep echoservice -1
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc req echoservice echoclient 1
 ```
 
 ## Tests

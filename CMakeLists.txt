@@ -103,27 +103,9 @@ if(ZCM_BUILD_EXAMPLES)
     RUNTIME_OUTPUT_DIRECTORY ${ZCM_EXAMPLE_OUTPUT_DIR}
   )
 
-  add_executable(zcm_pub examples/zcm_pub.c)
-  target_link_libraries(zcm_pub PRIVATE zcm_lib)
-  set_target_properties(zcm_pub PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${ZCM_EXAMPLE_OUTPUT_DIR}
-  )
-
-  add_executable(zcm_sub examples/zcm_sub.c)
-  target_link_libraries(zcm_sub PRIVATE zcm_lib)
-  set_target_properties(zcm_sub PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${ZCM_EXAMPLE_OUTPUT_DIR}
-  )
-
-  add_executable(zcm_bytes_pub examples/zcm_bytes_pub.c)
-  target_link_libraries(zcm_bytes_pub PRIVATE zcm_lib)
-  set_target_properties(zcm_bytes_pub PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${ZCM_EXAMPLE_OUTPUT_DIR}
-  )
-
-  add_executable(zcm_bytes_sub examples/zcm_bytes_sub.c)
-  target_link_libraries(zcm_bytes_sub PRIVATE zcm_lib)
-  set_target_properties(zcm_bytes_sub PROPERTIES
+  add_executable(zcm_proc examples/zcm_proc.c)
+  target_link_libraries(zcm_proc PRIVATE zcm_lib)
+  set_target_properties(zcm_proc PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${ZCM_EXAMPLE_OUTPUT_DIR}
   )
 
@@ -136,24 +118,6 @@ if(ZCM_BUILD_EXAMPLES)
   add_executable(zcm_send_helloworld examples/zcm_send_helloworld.c)
   target_link_libraries(zcm_send_helloworld PRIVATE zcm_lib)
   set_target_properties(zcm_send_helloworld PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${ZCM_EXAMPLE_OUTPUT_DIR}
-  )
-
-  add_executable(zcm_proc_example examples/zcm_proc_example.c)
-  target_link_libraries(zcm_proc_example PRIVATE zcm_lib)
-  set_target_properties(zcm_proc_example PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${ZCM_EXAMPLE_OUTPUT_DIR}
-  )
-
-  add_executable(zcm_rep examples/zcm_rep.c)
-  target_link_libraries(zcm_rep PRIVATE zcm_lib)
-  set_target_properties(zcm_rep PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${ZCM_EXAMPLE_OUTPUT_DIR}
-  )
-
-  add_executable(zcm_req examples/zcm_req.c)
-  target_link_libraries(zcm_req PRIVATE zcm_lib)
-  set_target_properties(zcm_req PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${ZCM_EXAMPLE_OUTPUT_DIR}
   )
 
