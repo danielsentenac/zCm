@@ -27,7 +27,7 @@ Optional:
 
 `dataSocket` attributes:
 - `type`: `PUB` or `SUB`
-- `port`: required TCP port
+- `port`: required for `PUB` only
 - `target`: required for `SUB` (publisher proc name)
 - `payload`: optional `PUB` payload (default `raw-bytes-proc`)
 - `intervalMs`: optional `PUB` period (default `1000`)
@@ -38,6 +38,7 @@ Handlers:
 - `arg kind`: `text`, `double`, `float`, `int`
 - TYPE payload order is strict.
 - Malformed TYPE payload reply: `ERROR` with expected format.
+- `SUB` discovers publisher port by sending default request `DATA_PORT` to target.
 
 ## Example
 ```xml
@@ -45,7 +46,7 @@ Handlers:
 <procConfig>
   <process name="basic">
     <dataSocket type="PUB" port="7301" payload="basic-pub" intervalMs="1000"/>
-    <dataSocket type="SUB" port="7302" target="coco"/>
+    <dataSocket type="SUB" target="coco"/>
     <control timeoutMs="200"/>
     <handlers>
       <core pingRequest="PING" pingReply="PONG" defaultReply="OK"/>

@@ -110,8 +110,8 @@ Process config at init (required):
 - `zcm_proc` is always an infinite daemon (no runtime mode).
 - Optional `<dataSocket>` configures bytes `PUB/SUB`:
   - `type=PUB|SUB`
-  - `port=<tcp-port>`
-  - `target=<proc-name>` for `SUB`
+  - `port=<tcp-port>` for `PUB`
+  - `target=<proc-name>` for `SUB` (port discovered via default request `DATA_PORT`)
 - Optional `<handlers>` adds request reply rules:
   - `<core pingRequest=... pingReply=... defaultReply=...>`
   - repeated `<type name=... reply=...><arg kind=.../>...</type>` with ordered payload args

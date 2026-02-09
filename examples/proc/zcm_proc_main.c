@@ -329,10 +329,11 @@ static int load_data_sockets(const char *cfg_path, runtime_cfg_t *cfg) {
       return -1;
     }
     value[0] = '\0';
-    if (run_xmllint_xpath(cfg_path, xpath, value, sizeof(value)) != 0 ||
-        parse_port_str(value, &sock->port) != 0) {
-      fprintf(stderr, "zcm_proc: invalid dataSocket[%d]@port in %s\n", i, cfg_path);
-      return -1;
+    if (run_xmllint_xpath(cfg_path, xpath, value, sizeof(value)) == 0 && value[0]) {
+      if (parse_port_str(value, &sock->port) != 0) {
+        fprintf(stderr, "zcm_proc: invalid dataSocket[%d]@port in %s\n", i, cfg_path);
+        return -1;
+      }
     }
 
     if (snprintf(xpath, sizeof(xpath),
@@ -369,8 +370,16 @@ static int load_data_sockets(const char *cfg_path, runtime_cfg_t *cfg) {
       fprintf(stderr, "zcm_proc: dataSocket[%d] target required for SUB in %s\n", i, cfg_path);
       return -1;
     }
+    if (sock->kind == DATA_SOCKET_SUB && sock->port > 0) {
+      fprintf(stderr, "zcm_proc: dataSocket[%d] SUB must not define @port in %s\n", i, cfg_path);
+      return -1;
+    }
     if (sock->kind == DATA_SOCKET_PUB && sock->target[0]) {
       fprintf(stderr, "zcm_proc: dataSocket[%d] target not allowed for PUB in %s\n", i, cfg_path);
+      return -1;
+    }
+    if (sock->kind == DATA_SOCKET_PUB && sock->port <= 0) {
+      fprintf(stderr, "zcm_proc: dataSocket[%d] PUB requires @port in %s\n", i, cfg_path);
       return -1;
     }
 
@@ -514,9 +523,21 @@ static int decode_type_payload(zcm_msg_t *msg, const type_handler_cfg_t *handler
 
 typedef struct data_socket_worker_ctx {
   zcm_proc_t *proc;
+  const runtime_cfg_t *cfg;
   char proc_name[128];
   data_socket_cfg_t sock;
 } data_socket_worker_ctx_t;
+
+static int first_pub_port(const runtime_cfg_t *cfg, int *out_port) {
+  if (!cfg || !out_port) return -1;
+  for (size_t i = 0; i < cfg->data_socket_count; i++) {
+    if (cfg->data_sockets[i].kind == DATA_SOCKET_PUB && cfg->data_sockets[i].port > 0) {
+      *out_port = cfg->data_sockets[i].port;
+      return 0;
+    }
+  }
+  return -1;
+}
 
 static int resolve_target_host(zcm_proc_t *proc, const char *target, char *host, size_t host_size) {
   if (!proc || !target || !*target || !host || host_size == 0) return -1;
@@ -531,6 +552,79 @@ static int resolve_target_host(zcm_proc_t *proc, const char *target, char *host,
     return -1;
   }
   return host[0] ? 0 : -1;
+}
+
+static int request_target_pub_port(zcm_proc_t *proc, const char *target, int *out_port) {
+  if (!proc || !target || !*target || !out_port) return -1;
+
+  char ep[256] = {0};
+  if (lookup_endpoint(proc, target, ep, sizeof(ep)) != 0) return -1;
+
+  zcm_socket_t *req = zcm_socket_new(zcm_proc_context(proc), ZCM_SOCK_REQ);
+  if (!req) return -1;
+  zcm_socket_set_timeouts(req, 1000);
+  if (zcm_socket_connect(req, ep) != 0) {
+    zcm_socket_free(req);
+    return -1;
+  }
+
+  zcm_msg_t *q = zcm_msg_new();
+  if (!q) {
+    zcm_socket_free(req);
+    return -1;
+  }
+  zcm_msg_set_type(q, "CORE");
+  zcm_msg_put_core_text(q, "DATA_PORT");
+  if (zcm_socket_send_msg(req, q) != 0) {
+    zcm_msg_free(q);
+    zcm_socket_free(req);
+    return -1;
+  }
+  zcm_msg_free(q);
+
+  zcm_msg_t *r = zcm_msg_new();
+  if (!r) {
+    zcm_socket_free(req);
+    return -1;
+  }
+  if (zcm_socket_recv_msg(req, r) != 0) {
+    zcm_msg_free(r);
+    zcm_socket_free(req);
+    return -1;
+  }
+
+  int ok = -1;
+  zcm_core_value_t core;
+  zcm_msg_rewind(r);
+  if (zcm_msg_get_core(r, &core) == 0) {
+    if (core.kind == ZCM_CORE_VALUE_INT) {
+      if (core.i > 0 && core.i <= 65535) {
+        *out_port = core.i;
+        ok = 0;
+      }
+    } else if (core.kind == ZCM_CORE_VALUE_TEXT) {
+      char tmp[32] = {0};
+      int n = (core.text_len < sizeof(tmp) - 1) ? (int)core.text_len : (int)sizeof(tmp) - 1;
+      memcpy(tmp, core.text, (size_t)n);
+      tmp[n] = '\0';
+      if (parse_port_str(tmp, out_port) == 0) ok = 0;
+    }
+  } else {
+    const char *text = NULL;
+    uint32_t len = 0;
+    zcm_msg_rewind(r);
+    if (zcm_msg_get_text(r, &text, &len) == 0) {
+      char tmp[32] = {0};
+      int n = (len < sizeof(tmp) - 1) ? (int)len : (int)sizeof(tmp) - 1;
+      memcpy(tmp, text, (size_t)n);
+      tmp[n] = '\0';
+      if (parse_port_str(tmp, out_port) == 0) ok = 0;
+    }
+  }
+
+  zcm_msg_free(r);
+  zcm_socket_free(req);
+  return ok;
 }
 
 static void *pub_worker_main(void *arg) {
@@ -582,12 +676,17 @@ static void *sub_worker_main(void *arg) {
 
   char host[256] = {0};
   char ep[256] = {0};
+  int pub_port = 0;
   for (;;) {
     if (resolve_target_host(ctx->proc, ctx->sock.target, host, sizeof(host)) != 0) {
       usleep(300 * 1000);
       continue;
     }
-    snprintf(ep, sizeof(ep), "tcp://%s:%d", host, ctx->sock.port);
+    if (request_target_pub_port(ctx->proc, ctx->sock.target, &pub_port) != 0) {
+      usleep(300 * 1000);
+      continue;
+    }
+    snprintf(ep, sizeof(ep), "tcp://%s:%d", host, pub_port);
     if (zcm_socket_connect(sub, ep) == 0 &&
         zcm_socket_set_subscribe(sub, "", 0) == 0) {
       break;
@@ -618,6 +717,7 @@ static void start_data_socket_workers(const runtime_cfg_t *cfg, zcm_proc_t *proc
     data_socket_worker_ctx_t *ctx = (data_socket_worker_ctx_t *)calloc(1, sizeof(*ctx));
     if (!ctx) continue;
     ctx->proc = proc;
+    ctx->cfg = cfg;
     snprintf(ctx->proc_name, sizeof(ctx->proc_name), "%s", cfg->name);
     ctx->sock = cfg->data_sockets[i];
 
@@ -820,6 +920,7 @@ static int run_daemon(const runtime_cfg_t *cfg) {
     uint32_t cmd_len = 0;
     const char *req_type = zcm_msg_get_type(req);
     char err_text[512] = {0};
+    char dynamic_reply[64] = {0};
     char parsed_summary[512] = {0};
     const char *reply_text = cfg->core_default_reply;
     int reply_as_core = 0;
@@ -873,7 +974,19 @@ static int run_daemon(const runtime_cfg_t *cfg) {
       }
 
       if (!malformed) {
-        if (cmd && text_equals_nocase(cmd, cmd_len, cfg->core_ping_request)) {
+        if (cmd && text_equals_nocase(cmd, cmd_len, "DATA_PORT")) {
+          int pub_port = 0;
+          if (first_pub_port(cfg, &pub_port) == 0) {
+            snprintf(dynamic_reply, sizeof(dynamic_reply), "%d", pub_port);
+            reply_text = dynamic_reply;
+          } else {
+            malformed = 1;
+            req_code = 404;
+            snprintf(err_text, sizeof(err_text), "ERR no PUB dataSocket configured");
+            reply_text = err_text;
+            reply_as_core = 0;
+          }
+        } else if (cmd && text_equals_nocase(cmd, cmd_len, cfg->core_ping_request)) {
           reply_text = cfg->core_ping_reply;
         } else {
           reply_text = cfg->core_default_reply;
