@@ -50,6 +50,10 @@ cmake --build build --target test-verbose
 
 ## Documentation
 Published docs: https://danielsentenac.github.io/zCm/
+Local docs:
+- `docs/zcm-proc.md` for unified process example modes.
+- `docs/zcm-msg.md` for message encoding format.
+- `docs/tests.md` for test coverage.
 
 ## Tools
 List registered processes:
@@ -118,4 +122,4 @@ See `docs/tests.md` for test coverage and intent.
 
 ## Status
 Scaffolded with a working broker/registry + typed message envelope.
-See `docs/legacy-compat.md` and `docs/zcm-msg.md`.
+See `docs/zcm-proc.md`, `docs/zcm-msg.md`, and `docs/tests.md`.
