@@ -296,11 +296,21 @@ static void broker_request_stop(zcm_broker_t *broker) {
   if (!broker || !broker->ctx || !broker->endpoint) return;
   void *sock = zmq_socket(zcm_context_zmq(broker->ctx), ZMQ_REQ);
   if (!sock) return;
+  int to = 1000;
+  int linger = 0;
+  int immediate = 1;
+  zmq_setsockopt(sock, ZMQ_RCVTIMEO, &to, sizeof(to));
+  zmq_setsockopt(sock, ZMQ_SNDTIMEO, &to, sizeof(to));
+  zmq_setsockopt(sock, ZMQ_LINGER, &linger, sizeof(linger));
+  zmq_setsockopt(sock, ZMQ_IMMEDIATE, &immediate, sizeof(immediate));
   if (zmq_connect(sock, broker->endpoint) != 0) {
     zmq_close(sock);
     return;
   }
-  zmq_send(sock, "STOP", 4, 0);
+  if (zmq_send(sock, "STOP", 4, 0) < 0) {
+    zmq_close(sock);
+    return;
+  }
   char reply[16] = {0};
   zmq_recv(sock, reply, sizeof(reply) - 1, 0);
   zmq_close(sock);
@@ -308,7 +318,7 @@ static void broker_request_stop(zcm_broker_t *broker) {
 
 void zcm_broker_stop(zcm_broker_t *broker) {
   if (!broker) return;
-  broker_request_stop(broker);
+  if (broker->running) broker_request_stop(broker);
   broker->running = 0;
   pthread_join(broker->thread, NULL);
   struct zcm_broker_entry *e = broker->head;
@@ -321,4 +331,9 @@ void zcm_broker_stop(zcm_broker_t *broker) {
   }
   free(broker->endpoint);
   free(broker);
+}
+
+int zcm_broker_is_running(const zcm_broker_t *broker) {
+  if (!broker) return 0;
+  return broker->running ? 1 : 0;
 }

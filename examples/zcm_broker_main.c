@@ -122,7 +122,7 @@ int main(int argc, char **argv) {
   printf("zcm-broker listening on %s (Ctrl+C to stop)\n", endpoint);
   fflush(stdout);
 
-  while (!g_stop) {
+  while (!g_stop && zcm_broker_is_running(broker)) {
     sleep(1);
   }
 

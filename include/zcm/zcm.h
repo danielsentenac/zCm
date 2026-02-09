@@ -53,6 +53,14 @@ zcm_broker_t *zcm_broker_start(zcm_context_t *ctx, const char *endpoint);
 void zcm_broker_stop(zcm_broker_t *broker);
 
 /**
+ * @brief Check whether a broker service loop is still running.
+ *
+ * @param broker Broker handle.
+ * @return `1` when running, `0` when stopped or when `broker` is `NULL`.
+ */
+int zcm_broker_is_running(const zcm_broker_t *broker);
+
+/**
  * @brief Return the library version string.
  *
  * @return Null-terminated version string.
