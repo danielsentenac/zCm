@@ -58,17 +58,28 @@ static char *load_endpoint_from_config(void) {
 
 #include <zmq.h>
 
+static void *make_req_socket(void *ctx, int timeout_ms) {
+  void *sock = zmq_socket(ctx, ZMQ_REQ);
+  if (!sock) return NULL;
+
+  int to = timeout_ms;
+  int linger = 0;
+  int immediate = 1;
+  zmq_setsockopt(sock, ZMQ_RCVTIMEO, &to, sizeof(to));
+  zmq_setsockopt(sock, ZMQ_SNDTIMEO, &to, sizeof(to));
+  zmq_setsockopt(sock, ZMQ_LINGER, &linger, sizeof(linger));
+  zmq_setsockopt(sock, ZMQ_IMMEDIATE, &immediate, sizeof(immediate));
+  return sock;
+}
+
 static int send_cmd(const char *endpoint, const char *cmd) {
   void *ctx = zmq_ctx_new();
   if (!ctx) return 1;
-  void *sock = zmq_socket(ctx, ZMQ_REQ);
+  void *sock = make_req_socket(ctx, 1000);
   if (!sock) {
     zmq_ctx_term(ctx);
     return 1;
   }
-  int to = 1000;
-  zmq_setsockopt(sock, ZMQ_RCVTIMEO, &to, sizeof(to));
-  zmq_setsockopt(sock, ZMQ_SNDTIMEO, &to, sizeof(to));
   if (zmq_connect(sock, endpoint) != 0) {
     zmq_close(sock);
     zmq_ctx_term(ctx);
@@ -91,14 +102,11 @@ static int send_cmd(const char *endpoint, const char *cmd) {
 static int send_list(const char *endpoint) {
   void *ctx = zmq_ctx_new();
   if (!ctx) return 1;
-  void *sock = zmq_socket(ctx, ZMQ_REQ);
+  void *sock = make_req_socket(ctx, 1000);
   if (!sock) {
     zmq_ctx_term(ctx);
     return 1;
   }
-  int to = 1000;
-  zmq_setsockopt(sock, ZMQ_RCVTIMEO, &to, sizeof(to));
-  zmq_setsockopt(sock, ZMQ_SNDTIMEO, &to, sizeof(to));
   if (zmq_connect(sock, endpoint) != 0) {
     zmq_close(sock);
     zmq_ctx_term(ctx);
