@@ -72,6 +72,22 @@ Ping a registered process (control REQ/REP):
 ```bash
 ./build/tools/zcm ping NAME
 ```
+Run broker main loop:
+```bash
+./build/tools/zcm broker run
+```
+Check broker status:
+```bash
+./build/tools/zcm broker ping
+```
+Stop broker:
+```bash
+./build/tools/zcm broker stop
+```
+List broker registry:
+```bash
+./build/tools/zcm broker list
+```
 Unified process daemon:
 ```bash
 ./build/examples/zcm_proc daemon zcmproc
@@ -88,19 +104,19 @@ Broker resolution for `zcm` CLI and broker:
 ## Examples
 Start a broker (endpoint via `ZCmDomains`):
 ```bash
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_broker_main
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm broker run
 ```
 Stop the broker with `Ctrl+C`, or remotely:
 ```bash
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_broker_ctl stop
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm broker stop
 ```
 Check broker status:
 ```bash
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_broker_ctl ping
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm broker ping
 ```
 List registered names:
 ```bash
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_broker_ctl list
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm broker list
 ```
 List via API:
 ```bash

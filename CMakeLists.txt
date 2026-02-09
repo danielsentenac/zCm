@@ -85,18 +85,6 @@ if(ZCM_BUILD_TESTS)
 endif()
 
 if(ZCM_BUILD_EXAMPLES)
-  add_executable(zcm_broker_main examples/broker/zcm_broker_main.c)
-  target_link_libraries(zcm_broker_main PRIVATE zcm_lib)
-  set_target_properties(zcm_broker_main PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${ZCM_EXAMPLE_OUTPUT_DIR}
-  )
-
-  add_executable(zcm_broker_ctl examples/broker/zcm_broker_ctl.c)
-  target_link_libraries(zcm_broker_ctl PRIVATE zcm_lib)
-  set_target_properties(zcm_broker_ctl PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${ZCM_EXAMPLE_OUTPUT_DIR}
-  )
-
   add_executable(zcm_list examples/node/zcm_list.c)
   target_link_libraries(zcm_list PRIVATE zcm_lib)
   set_target_properties(zcm_list PROPERTIES
