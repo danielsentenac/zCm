@@ -50,8 +50,11 @@ REFERENCES_RELATION    = YES
 GENERATE_HTML          = YES
 HTML_OUTPUT            = html
 HTML_FILE_EXTENSION    = .html
+HTML_EXTRA_STYLESHEET  = docs/theme/doxygen-awesome.css \
+                         docs/theme/doxygen-awesome-sidebar-only.css
 HTML_COLORSTYLE_HUE    = 210
 HTML_DYNAMIC_MENUS     = YES
+DISABLE_INDEX          = NO
 GENERATE_TREEVIEW      = YES
 FULL_SIDEBAR           = YES
 
