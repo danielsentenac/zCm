@@ -2,9 +2,18 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <stdio.h>
+#include <ctype.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <pthread.h>
+#include <sys/wait.h>
 #include <unistd.h>
+
+#ifndef ZCM_PROC_CONFIG_SCHEMA_DEFAULT
+#define ZCM_PROC_CONFIG_SCHEMA_DEFAULT "docs/config/proc-config.xsd"
+#endif
 
 struct zcm_proc {
   zcm_context_t *ctx;
@@ -15,6 +24,190 @@ struct zcm_proc {
   pthread_t ctrl_thread;
   int stop;
 };
+
+static void trim_ws_inplace(char *text) {
+  if (!text) return;
+  char *start = text;
+  while (*start && isspace((unsigned char)*start)) start++;
+  if (start != text) memmove(text, start, strlen(start) + 1);
+  size_t n = strlen(text);
+  while (n > 0 && isspace((unsigned char)text[n - 1])) {
+    text[--n] = '\0';
+  }
+}
+
+static int run_xmllint_validate(const char *schema_path, const char *config_path) {
+  pid_t pid = fork();
+  if (pid < 0) return -1;
+  if (pid == 0) {
+    int devnull = open("/dev/null", O_WRONLY);
+    if (devnull >= 0) {
+      (void)dup2(devnull, STDOUT_FILENO);
+      (void)dup2(devnull, STDERR_FILENO);
+      close(devnull);
+    }
+    execlp("xmllint", "xmllint",
+           "--noout", "--schema", schema_path, config_path,
+           (char *)NULL);
+    _exit(127);
+  }
+
+  int status = 0;
+  if (waitpid(pid, &status, 0) < 0) return -1;
+  if (WIFEXITED(status) && WEXITSTATUS(status) == 0) return 0;
+  if (WIFEXITED(status) && WEXITSTATUS(status) == 127) {
+    fprintf(stderr, "zcm_proc: xmllint not found in PATH\n");
+  }
+  return -1;
+}
+
+static int run_xmllint_xpath(const char *config_path, const char *xpath_expr,
+                             char *out, size_t out_size) {
+  if (!out || out_size == 0) return -1;
+  out[0] = '\0';
+
+  int pipefd[2];
+  if (pipe(pipefd) != 0) return -1;
+
+  pid_t pid = fork();
+  if (pid < 0) {
+    close(pipefd[0]);
+    close(pipefd[1]);
+    return -1;
+  }
+
+  if (pid == 0) {
+    close(pipefd[0]);
+    if (dup2(pipefd[1], STDOUT_FILENO) < 0) _exit(126);
+    close(pipefd[1]);
+    int devnull = open("/dev/null", O_WRONLY);
+    if (devnull >= 0) {
+      (void)dup2(devnull, STDERR_FILENO);
+      close(devnull);
+    }
+    execlp("xmllint", "xmllint",
+           "--xpath", xpath_expr, config_path,
+           (char *)NULL);
+    _exit(127);
+  }
+
+  close(pipefd[1]);
+  size_t off = 0;
+  while (off + 1 < out_size) {
+    ssize_t n = read(pipefd[0], out + off, out_size - 1 - off);
+    if (n < 0) {
+      if (errno == EINTR) continue;
+      break;
+    }
+    if (n == 0) break;
+    off += (size_t)n;
+  }
+  out[off] = '\0';
+  close(pipefd[0]);
+
+  int status = 0;
+  if (waitpid(pid, &status, 0) < 0) return -1;
+  if (!(WIFEXITED(status) && WEXITSTATUS(status) == 0)) {
+    if (WIFEXITED(status) && WEXITSTATUS(status) == 127) {
+      fprintf(stderr, "zcm_proc: xmllint not found in PATH\n");
+    }
+    return -1;
+  }
+  trim_ws_inplace(out);
+  return 0;
+}
+
+static int parse_socket_type(const char *text, zcm_socket_type_t *out) {
+  if (!text || !*text || !out) return -1;
+  if (strcasecmp(text, "REQ") == 0) { *out = ZCM_SOCK_REQ; return 0; }
+  if (strcasecmp(text, "REP") == 0) { *out = ZCM_SOCK_REP; return 0; }
+  if (strcasecmp(text, "PUB") == 0) { *out = ZCM_SOCK_PUB; return 0; }
+  if (strcasecmp(text, "SUB") == 0) { *out = ZCM_SOCK_SUB; return 0; }
+  if (strcasecmp(text, "PAIR") == 0) { *out = ZCM_SOCK_PAIR; return 0; }
+  if (strcasecmp(text, "PUSH") == 0) { *out = ZCM_SOCK_PUSH; return 0; }
+  if (strcasecmp(text, "PULL") == 0) { *out = ZCM_SOCK_PULL; return 0; }
+  return -1;
+}
+
+static int parse_bool_text(const char *text, int *out) {
+  if (!text || !*text || !out) return -1;
+  if (strcasecmp(text, "true") == 0 || strcmp(text, "1") == 0) {
+    *out = 1;
+    return 0;
+  }
+  if (strcasecmp(text, "false") == 0 || strcmp(text, "0") == 0) {
+    *out = 0;
+    return 0;
+  }
+  return -1;
+}
+
+static int load_proc_config(const char *name,
+                            zcm_socket_type_t *data_type,
+                            int *bind_data,
+                            int *ctrl_timeout_ms) {
+  if (!name || !data_type || !bind_data || !ctrl_timeout_ms) return -1;
+
+  const char *cfg_dir = getenv("ZCM_PROC_CONFIG_DIR");
+  if (!cfg_dir || !*cfg_dir) cfg_dir = ".";
+
+  char cfg_path[1024];
+  if (snprintf(cfg_path, sizeof(cfg_path), "%s/%s.cfg", cfg_dir, name) >= (int)sizeof(cfg_path)) {
+    fprintf(stderr, "zcm_proc: config path too long for '%s'\n", name);
+    return -1;
+  }
+  if (access(cfg_path, R_OK) != 0) {
+    fprintf(stderr, "zcm_proc: config file not found: %s\n", cfg_path);
+    return -1;
+  }
+
+  const char *schema = getenv("ZCM_PROC_CONFIG_SCHEMA");
+  if (!schema || !*schema) schema = ZCM_PROC_CONFIG_SCHEMA_DEFAULT;
+  if (access(schema, R_OK) != 0) {
+    fprintf(stderr, "zcm_proc: config schema not found: %s\n", schema);
+    return -1;
+  }
+
+  if (run_xmllint_validate(schema, cfg_path) != 0) {
+    fprintf(stderr, "zcm_proc: invalid config file: %s\n", cfg_path);
+    return -1;
+  }
+
+  char value[128];
+  if (run_xmllint_xpath(cfg_path, "string(/procConfig/process/@name)", value, sizeof(value)) != 0 || !value[0]) {
+    fprintf(stderr, "zcm_proc: config missing process name in %s\n", cfg_path);
+    return -1;
+  }
+  if (strcmp(value, name) != 0) {
+    fprintf(stderr, "zcm_proc: config process name mismatch (%s != %s)\n", value, name);
+    return -1;
+  }
+
+  if (run_xmllint_xpath(cfg_path, "string(/procConfig/process/dataSocket/@type)", value, sizeof(value)) != 0 ||
+      parse_socket_type(value, data_type) != 0) {
+    fprintf(stderr, "zcm_proc: invalid dataSocket@type in %s\n", cfg_path);
+    return -1;
+  }
+
+  if (run_xmllint_xpath(cfg_path, "string(/procConfig/process/dataSocket/@bind)", value, sizeof(value)) != 0 ||
+      parse_bool_text(value, bind_data) != 0) {
+    fprintf(stderr, "zcm_proc: invalid dataSocket@bind in %s\n", cfg_path);
+    return -1;
+  }
+
+  if (run_xmllint_xpath(cfg_path, "string(/procConfig/process/control/@timeoutMs)", value, sizeof(value)) == 0 &&
+      value[0] != '\0') {
+    char *end = NULL;
+    long ms = strtol(value, &end, 10);
+    if (!end || *end != '\0' || ms <= 0 || ms > 600000) {
+      fprintf(stderr, "zcm_proc: invalid control@timeoutMs in %s\n", cfg_path);
+      return -1;
+    }
+    *ctrl_timeout_ms = (int)ms;
+  }
+
+  return 0;
+}
 
 static int load_domain_info(char **broker_ep, char **host_out, int *first_port, int *range_size) {
   const char *domain = getenv("ZCMDOMAIN");
@@ -126,6 +319,12 @@ static int bind_in_range(zcm_socket_t *sock, int first_port, int range_size, int
 int zcm_proc_init(const char *name, zcm_socket_type_t data_type, int bind_data,
                   zcm_proc_t **out_proc, zcm_socket_t **out_data) {
   if (!name || !out_proc) return -1;
+  zcm_socket_type_t cfg_data_type = data_type;
+  int cfg_bind_data = bind_data ? 1 : 0;
+  int cfg_ctrl_timeout_ms = 200;
+  if (load_proc_config(name, &cfg_data_type, &cfg_bind_data, &cfg_ctrl_timeout_ms) != 0) {
+    return -1;
+  }
 
   char *broker = NULL;
   char *host = NULL;
@@ -143,8 +342,8 @@ int zcm_proc_init(const char *name, zcm_socket_type_t data_type, int bind_data,
 
   zcm_socket_t *data = NULL;
   int data_port = -1;
-  if (bind_data) {
-    data = zcm_socket_new(ctx, data_type);
+  if (cfg_bind_data) {
+    data = zcm_socket_new(ctx, cfg_data_type);
     if (!data) return -1;
     if (bind_in_range(data, first_port, range_size, &data_port, -1) != 0) {
       fprintf(stderr, "zcm_proc: data bind failed\n");
@@ -154,7 +353,7 @@ int zcm_proc_init(const char *name, zcm_socket_type_t data_type, int bind_data,
 
   zcm_socket_t *ctrl = zcm_socket_new(ctx, ZCM_SOCK_REP);
   if (!ctrl) return -1;
-  zcm_socket_set_timeouts(ctrl, 200);
+  zcm_socket_set_timeouts(ctrl, cfg_ctrl_timeout_ms);
   int ctrl_port = -1;
   if (bind_in_range(ctrl, first_port, range_size, &ctrl_port, data_port) != 0) {
     fprintf(stderr, "zcm_proc: control bind failed\n");
@@ -169,7 +368,7 @@ int zcm_proc_init(const char *name, zcm_socket_type_t data_type, int bind_data,
 
   const char *reg_ep = (data_port > 0) ? data_reg_ep : ctrl_reg_ep;
   if (zcm_node_register_ex(node, name, reg_ep, ctrl_reg_ep, use_host, getpid()) != 0) {
-    fprintf(stderr, "zcm_proc: register failed\n");
+    fprintf(stderr, "zcm_proc: register failed (broker not found)\n");
     return -1;
   }
 

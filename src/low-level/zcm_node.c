@@ -59,9 +59,13 @@ static int send_frames_req(void *sock, const char *cmd, const char *name, const 
   return 0;
 }
 
-static void set_sock_timeouts(void *sock, int ms) {
-  zmq_setsockopt(sock, ZMQ_RCVTIMEO, &ms, sizeof(ms));
-  zmq_setsockopt(sock, ZMQ_SNDTIMEO, &ms, sizeof(ms));
+static void set_req_socket_options(void *sock, int timeout_ms) {
+  int linger_ms = 0;
+  int immediate = 1;
+  zmq_setsockopt(sock, ZMQ_RCVTIMEO, &timeout_ms, sizeof(timeout_ms));
+  zmq_setsockopt(sock, ZMQ_SNDTIMEO, &timeout_ms, sizeof(timeout_ms));
+  zmq_setsockopt(sock, ZMQ_LINGER, &linger_ms, sizeof(linger_ms));
+  zmq_setsockopt(sock, ZMQ_IMMEDIATE, &immediate, sizeof(immediate));
 }
 
 static int recv_with_timeout(void *sock, void *buf, size_t len, int timeout_ms) {
@@ -76,7 +80,7 @@ int zcm_node_register(zcm_node_t *node, const char *name, const char *endpoint) 
   if (!node || !name || !endpoint) return -1;
   void *sock = zmq_socket(zcm_context_zmq(node->ctx), ZMQ_REQ);
   if (!sock) return -1;
-  set_sock_timeouts(sock, 1000);
+  set_req_socket_options(sock, 1000);
   int rc = zmq_connect(sock, node->broker_endpoint);
   if (rc != 0) {
     zmq_close(sock);
@@ -97,7 +101,7 @@ int zcm_node_unregister(zcm_node_t *node, const char *name) {
   if (!node || !name) return -1;
   void *sock = zmq_socket(zcm_context_zmq(node->ctx), ZMQ_REQ);
   if (!sock) return -1;
-  set_sock_timeouts(sock, 1000);
+  set_req_socket_options(sock, 1000);
   if (zmq_connect(sock, node->broker_endpoint) != 0) {
     zmq_close(sock);
     return -1;
@@ -118,6 +122,7 @@ int zcm_node_register_ex(zcm_node_t *node, const char *name, const char *endpoin
   if (!node || !name || !endpoint || !ctrl_endpoint || !host) return -1;
   void *sock = zmq_socket(zcm_context_zmq(node->ctx), ZMQ_REQ);
   if (!sock) return -1;
+  set_req_socket_options(sock, 1000);
   if (zmq_connect(sock, node->broker_endpoint) != 0) {
     zmq_close(sock);
     return -1;
@@ -145,7 +150,7 @@ int zcm_node_info(zcm_node_t *node, const char *name,
   if (!node || !name) return -1;
   void *sock = zmq_socket(zcm_context_zmq(node->ctx), ZMQ_REQ);
   if (!sock) return -1;
-  set_sock_timeouts(sock, 1000);
+  set_req_socket_options(sock, 1000);
   if (zmq_connect(sock, node->broker_endpoint) != 0) {
     zmq_close(sock);
     return -1;
@@ -200,7 +205,7 @@ int zcm_node_lookup(zcm_node_t *node, const char *name, char *out_endpoint, size
   if (!node || !name || !out_endpoint || out_size == 0) return -1;
   void *sock = zmq_socket(zcm_context_zmq(node->ctx), ZMQ_REQ);
   if (!sock) return -1;
-  set_sock_timeouts(sock, 1000);
+  set_req_socket_options(sock, 1000);
   int rc = zmq_connect(sock, node->broker_endpoint);
   if (rc != 0) {
     zmq_close(sock);
@@ -234,7 +239,7 @@ int zcm_node_list(zcm_node_t *node, zcm_node_entry_t **out_entries, size_t *out_
 
   void *sock = zmq_socket(zcm_context_zmq(node->ctx), ZMQ_REQ);
   if (!sock) return -1;
-  set_sock_timeouts(sock, 1000);
+  set_req_socket_options(sock, 1000);
   if (zmq_connect(sock, node->broker_endpoint) != 0) {
     zmq_close(sock);
     return -1;

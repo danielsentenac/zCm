@@ -21,6 +21,11 @@ add_library(zcm_lib
   src/low-level/zcm_msg.c
 )
 
+target_compile_definitions(zcm_lib
+  PRIVATE
+    ZCM_PROC_CONFIG_SCHEMA_DEFAULT="${CMAKE_CURRENT_SOURCE_DIR}/docs/config/proc-config.xsd"
+)
+
 target_include_directories(zcm_lib
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -45,6 +50,13 @@ set(CTEST_OUTPUT_ON_FAILURE ON)
 set(ZCM_TEST_OUTPUT_DIR ${CMAKE_BINARY_DIR}/tests)
 set(ZCM_EXAMPLE_OUTPUT_DIR ${CMAKE_BINARY_DIR}/examples)
 set(ZCM_TOOL_OUTPUT_DIR ${CMAKE_BINARY_DIR}/tools)
+set(ZCM_LIB_OUTPUT_DIR ${CMAKE_BINARY_DIR}/lib)
+
+set_target_properties(zcm_lib PROPERTIES
+  ARCHIVE_OUTPUT_DIRECTORY ${ZCM_LIB_OUTPUT_DIR}
+  LIBRARY_OUTPUT_DIRECTORY ${ZCM_LIB_OUTPUT_DIR}
+  RUNTIME_OUTPUT_DIRECTORY ${ZCM_LIB_OUTPUT_DIR}
+)
 
 if(ZCM_BUILD_TESTS)
   enable_testing()
@@ -85,27 +97,9 @@ if(ZCM_BUILD_TESTS)
 endif()
 
 if(ZCM_BUILD_EXAMPLES)
-  add_executable(zcm_list examples/node/zcm_list.c)
-  target_link_libraries(zcm_list PRIVATE zcm_lib)
-  set_target_properties(zcm_list PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${ZCM_EXAMPLE_OUTPUT_DIR}
-  )
-
   add_executable(zcm_proc examples/proc/zcm_proc_main.c)
   target_link_libraries(zcm_proc PRIVATE zcm_lib)
   set_target_properties(zcm_proc PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${ZCM_EXAMPLE_OUTPUT_DIR}
-  )
-
-  add_executable(zcm_helloworld_handler examples/msg/zcm_helloworld_handler.c)
-  target_link_libraries(zcm_helloworld_handler PRIVATE zcm_lib)
-  set_target_properties(zcm_helloworld_handler PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${ZCM_EXAMPLE_OUTPUT_DIR}
-  )
-
-  add_executable(zcm_send_helloworld examples/msg/zcm_send_helloworld.c)
-  target_link_libraries(zcm_send_helloworld PRIVATE zcm_lib)
-  set_target_properties(zcm_send_helloworld PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${ZCM_EXAMPLE_OUTPUT_DIR}
   )
 
@@ -118,20 +112,25 @@ if(ZCM_BUILD_TOOLS)
     RUNTIME_OUTPUT_DIRECTORY ${ZCM_TOOL_OUTPUT_DIR}
   )
 
-  add_executable(zcm tools/zcm/zcm_cli.c)
+  add_executable(zcm tools/command-line/zcm_cli.c)
   target_link_libraries(zcm PRIVATE zcm_lib pthread)
   set_target_properties(zcm PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${ZCM_TOOL_OUTPUT_DIR}
   )
 
-  add_executable(zcm_broker tools/zcm/zcm_broker.c)
+  add_executable(zcm_broker tools/broker/zcm_broker.c)
   target_link_libraries(zcm_broker PRIVATE zcm_lib)
   set_target_properties(zcm_broker PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${ZCM_TOOL_OUTPUT_DIR}
   )
 endif()
 
-add_custom_target(test-verbose
-  COMMAND ${CMAKE_CTEST_COMMAND} --test-dir ${CMAKE_BINARY_DIR} --verbose --output-on-failure
+add_custom_target(test_results
+  COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/test_results
+  COMMAND ${CMAKE_CTEST_COMMAND} --test-dir ${CMAKE_BINARY_DIR} --verbose --output-on-failure --output-log ${CMAKE_BINARY_DIR}/test_results/ctest.log
   WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+add_custom_target(test-verbose
+  DEPENDS test_results
 )

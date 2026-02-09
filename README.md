@@ -49,7 +49,7 @@ ctest --test-dir build
 ```
 Verbose tests:
 ```bash
-cmake --build build --target test-verbose
+cmake --build build --target test_results
 ```
 
 ## Documentation
@@ -72,6 +72,14 @@ Ping a registered process (control REQ/REP):
 ```bash
 ./build/tools/zcm ping NAME
 ```
+Send a typed core message:
+```bash
+./build/tools/zcm send NAME -t "hello"
+./build/tools/zcm send NAME -i 42
+./build/tools/zcm send NAME -f 3.14
+./build/tools/zcm send NAME -d 2.718281828
+./build/tools/zcm send NAME -type CustomType -t "hello"
+```
 Run broker main loop:
 ```bash
 ./build/tools/zcm_broker
@@ -92,6 +100,13 @@ Unified process daemon:
 ```bash
 ./build/examples/zcm_proc daemon zcmproc
 ```
+
+Process config at init (required):
+- zcm_proc loads `NAME.cfg` as XML from:
+  - `$ZCM_PROC_CONFIG_DIR`, else current directory (`.`)
+- XML is validated against:
+  - `$ZCM_PROC_CONFIG_SCHEMA`, else `docs/config/proc-config.xsd`
+- Examples: `docs/config/coco.cfg`, `docs/config/zcmproc.cfg`
 
 Broker resolution for `zcm` CLI and broker:
 - `ZCMDOMAIN` selects the domain
@@ -118,13 +133,10 @@ List registered names:
 ```bash
 ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm broker list
 ```
-List via API:
-```bash
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_list
-```
 
 Default daemon request/reply (`PING` -> `PONG`):
 ```bash
+cp docs/config/zcmproc.cfg ./zcmproc.cfg
 ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc daemon zcmproc
 ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm ping zcmproc
 ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc req zcmproc echoclient 1 PING

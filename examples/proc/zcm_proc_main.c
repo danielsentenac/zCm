@@ -28,6 +28,12 @@ static int lookup_endpoint(zcm_proc_t *proc, const char *target, char *ep, size_
   return 0;
 }
 
+static int text_equals_nocase(const char *text, uint32_t len, const char *lit) {
+  size_t n = strlen(lit);
+  if (len != n) return 0;
+  return strncasecmp(text, lit, n) == 0;
+}
+
 static int run_pub_msg(const char *name, int count) {
   zcm_proc_t *proc = NULL;
   zcm_socket_t *pub = NULL;
@@ -90,13 +96,33 @@ static int run_sub_msg(const char *target, const char *self_name, int count) {
       return 1;
     }
     if (zcm_socket_recv_msg(sub, msg) == 0) {
-      int32_t v = 0;
-      const char *text = NULL;
-      if (zcm_msg_get_int(msg, &v) == 0 &&
-          zcm_msg_get_text(msg, &text, NULL) == 0) {
-        printf("type=%s v=%d text=%s\n", zcm_msg_get_type(msg), v, text);
+      zcm_core_value_t core;
+      zcm_msg_rewind(msg);
+      if (zcm_msg_get_core(msg, &core) == 0) {
+        if (core.kind == ZCM_CORE_VALUE_TEXT) {
+          printf("type=%s core.text=%.*s\n",
+                 zcm_msg_get_type(msg), (int)core.text_len, core.text);
+        } else if (core.kind == ZCM_CORE_VALUE_DOUBLE) {
+          printf("type=%s core.double=%f\n", zcm_msg_get_type(msg), core.d);
+        } else if (core.kind == ZCM_CORE_VALUE_FLOAT) {
+          printf("type=%s core.float=%f\n", zcm_msg_get_type(msg), core.f);
+        } else if (core.kind == ZCM_CORE_VALUE_INT) {
+          printf("type=%s core.int=%d\n", zcm_msg_get_type(msg), core.i);
+        } else {
+          printf("message decode error: unsupported core kind\n");
+        }
       } else {
-        printf("message decode error: %s\n", zcm_msg_last_error(msg));
+        zcm_msg_rewind(msg);
+        int32_t v = 0;
+        const char *text = NULL;
+        uint32_t text_len = 0;
+        if (zcm_msg_get_int(msg, &v) == 0 &&
+            zcm_msg_get_text(msg, &text, &text_len) == 0) {
+          printf("type=%s v=%d text=%.*s\n",
+                 zcm_msg_get_type(msg), v, (int)text_len, text);
+        } else {
+          printf("message decode error: %s\n", zcm_msg_last_error(msg));
+        }
       }
     }
     zcm_msg_free(msg);
@@ -177,17 +203,38 @@ static int run_daemon(const char *name) {
       return 1;
     }
     const char *cmd = NULL;
+    uint32_t cmd_len = 0;
     int32_t req_code = 200;
+    int core_request = 0;
     if (zcm_socket_recv_msg(rep, req) == 0) {
-      if (zcm_msg_get_text(req, &cmd, NULL) != 0) {
-        cmd = NULL;
+      zcm_core_value_t core;
+      zcm_msg_rewind(req);
+      if (zcm_msg_get_core(req, &core) == 0) {
+        core_request = 1;
+        if (core.kind == ZCM_CORE_VALUE_TEXT) {
+          cmd = core.text;
+          cmd_len = core.text_len;
+          printf("received query: type=%s core.text=%.*s\n",
+                 zcm_msg_get_type(req), (int)cmd_len, cmd);
+        } else if (core.kind == ZCM_CORE_VALUE_DOUBLE) {
+          printf("received query: type=%s core.double=%f\n", zcm_msg_get_type(req), core.d);
+        } else if (core.kind == ZCM_CORE_VALUE_FLOAT) {
+          printf("received query: type=%s core.float=%f\n", zcm_msg_get_type(req), core.f);
+        } else if (core.kind == ZCM_CORE_VALUE_INT) {
+          printf("received query: type=%s core.int=%d\n", zcm_msg_get_type(req), core.i);
+        }
+      } else {
+        zcm_msg_rewind(req);
+        if (zcm_msg_get_text(req, &cmd, &cmd_len) != 0) {
+          cmd = NULL;
+          cmd_len = 0;
+        }
+        if (zcm_msg_get_int(req, &req_code) != 0) {
+          req_code = 200;
+        }
+        printf("received query: type=%s cmd=%s\n",
+               zcm_msg_get_type(req), cmd ? cmd : "<none>");
       }
-      if (zcm_msg_get_int(req, &req_code) != 0) {
-        req_code = 200;
-      }
-
-      printf("received query: type=%s cmd=%s\n",
-             zcm_msg_get_type(req), cmd ? cmd : "<none>");
     }
     zcm_msg_free(req);
 
@@ -197,13 +244,17 @@ static int run_daemon(const char *name) {
       return 1;
     }
     zcm_msg_set_type(reply, "REPLY");
-    if (cmd && strcasecmp(cmd, "PING") == 0) {
-      zcm_msg_put_text(reply, "PONG");
-    } else if (cmd && cmd[0]) {
-      zcm_msg_put_text(reply, "OK");
-    } else {
-      zcm_msg_put_text(reply, "ERR");
+    const char *reply_text = "ERR";
+    if (cmd && text_equals_nocase(cmd, cmd_len, "PING")) {
+      reply_text = "PONG";
+    } else if (core_request) {
+      reply_text = "OK";
+    } else if (cmd && cmd_len > 0) {
+      reply_text = "OK";
     }
+
+    if (core_request) zcm_msg_put_core_text(reply, reply_text);
+    else zcm_msg_put_text(reply, reply_text);
     zcm_msg_put_int(reply, req_code);
     if (zcm_socket_send_msg(rep, reply) != 0) {
       fprintf(stderr, "reply send failed\n");
