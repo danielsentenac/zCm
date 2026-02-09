@@ -103,7 +103,7 @@ if(ZCM_BUILD_EXAMPLES)
     RUNTIME_OUTPUT_DIRECTORY ${ZCM_EXAMPLE_OUTPUT_DIR}
   )
 
-  add_executable(zcm_proc examples/proc/zcm_proc.c)
+  add_executable(zcm_proc examples/proc/zcm_proc_main.c)
   target_link_libraries(zcm_proc PRIVATE zcm_lib)
   set_target_properties(zcm_proc PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${ZCM_EXAMPLE_OUTPUT_DIR}
