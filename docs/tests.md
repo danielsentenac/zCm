@@ -18,6 +18,7 @@ This document describes the intent and coverage of the current test suite.
   ./build/tests/zcm_msg_fuzz
   ./build/tests/zcm_msg_vectors
   ./build/tests/zcm_node_list
+  ./build/tests/zcm_proc_reannounce
   ```
 
 ## Test descriptions
@@ -59,3 +60,12 @@ This document describes the intent and coverage of the current test suite.
 - Calls `zcm_node_list()` and asserts both are present.
 
 **Files:** `tests/node/zcm_node_list.c`
+
+### `zcm_proc_reannounce`
+**Purpose:** verify automatic proc re-registration after broker restart.
+- Starts a broker and a `zcm_proc` test instance.
+- Verifies the proc name is initially resolvable.
+- Stops and restarts broker on the same endpoint.
+- Polls lookup until the proc name appears again.
+
+**Files:** `tests/node/zcm_proc_reannounce.c`

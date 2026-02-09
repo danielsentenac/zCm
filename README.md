@@ -108,6 +108,8 @@ Process config at init (required):
   - `$ZCM_PROC_CONFIG_SCHEMA`, else `config/schema/proc-config.xsd`
 - `<process @name>` is the process registration name.
 - `zcm_proc` is always an infinite daemon (no runtime mode).
+- `zcm_proc` re-announces its registration periodically so names are restored if broker restarts.
+  - interval can be tuned with `ZCM_PROC_REANNOUNCE_MS` (default `1000`)
 - Optional repeated `<dataSocket>` configures bytes `PUB/SUB`:
   - `type=PUB|SUB`
   - `PUB` uses `port=<tcp-port>` and optional `payload`, `intervalMs`

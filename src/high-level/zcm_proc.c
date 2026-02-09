@@ -5,15 +5,24 @@
 #include <strings.h>
 #include <stdio.h>
 #include <ctype.h>
+#include <stdint.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 #ifndef ZCM_PROC_CONFIG_SCHEMA_DEFAULT
 #define ZCM_PROC_CONFIG_SCHEMA_DEFAULT "config/schema/proc-config.xsd"
 #endif
+
+#ifndef ZCM_PROC_REANNOUNCE_MS_DEFAULT
+#define ZCM_PROC_REANNOUNCE_MS_DEFAULT 1000
+#endif
+
+#define ZCM_PROC_REANNOUNCE_MS_MIN 100
+#define ZCM_PROC_REANNOUNCE_MS_MAX 60000
 
 struct zcm_proc {
   zcm_context_t *ctx;
@@ -21,9 +30,42 @@ struct zcm_proc {
   zcm_socket_t *ctrl;
   zcm_socket_t *data;
   char *name;
+  char *reg_endpoint;
+  char *ctrl_reg_endpoint;
+  char *host;
+  int pid;
+  int announce_interval_ms;
+  int announce_ok;
   pthread_t ctrl_thread;
   int stop;
 };
+
+static uint64_t monotonic_ms(void) {
+  struct timespec ts;
+  if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
+  return ((uint64_t)ts.tv_sec * 1000ULL) + ((uint64_t)ts.tv_nsec / 1000000ULL);
+}
+
+static int parse_positive_int_range(const char *text, int min_val, int max_val, int *out) {
+  if (!text || !*text || !out) return -1;
+  char *end = NULL;
+  long v = strtol(text, &end, 10);
+  if (!end || *end != '\0') return -1;
+  if (v < min_val || v > max_val) return -1;
+  *out = (int)v;
+  return 0;
+}
+
+static int proc_register_ex(struct zcm_proc *proc) {
+  if (!proc || !proc->node || !proc->name || !proc->reg_endpoint ||
+      !proc->ctrl_reg_endpoint || !proc->host) {
+    return -1;
+  }
+  return zcm_node_register_ex(proc->node, proc->name,
+                              proc->reg_endpoint,
+                              proc->ctrl_reg_endpoint,
+                              proc->host, proc->pid);
+}
 
 static void trim_ws_inplace(char *text) {
   if (!text) return;
@@ -251,6 +293,7 @@ static int load_domain_info(char **broker_ep, char **host_out, int *first_port, 
 
 static void *ctrl_thread_main(void *arg) {
   struct zcm_proc *proc = (struct zcm_proc *)arg;
+  uint64_t next_announce_ms = monotonic_ms() + (uint64_t)proc->announce_interval_ms;
   for (;;) {
     char ctrl_buf[64] = {0};
     size_t ctrl_len = 0;
@@ -273,6 +316,24 @@ static void *ctrl_thread_main(void *arg) {
       }
     } else {
       if (proc->stop) break;
+    }
+
+    if (proc->stop) break;
+    uint64_t now_ms = monotonic_ms();
+    if (now_ms != 0 && now_ms >= next_announce_ms) {
+      if (proc_register_ex(proc) == 0) {
+        if (!proc->announce_ok) {
+          printf("zcm_proc: broker reachable, re-registered %s\n", proc->name);
+          fflush(stdout);
+        }
+        proc->announce_ok = 1;
+      } else {
+        if (proc->announce_ok) {
+          fprintf(stderr, "zcm_proc: broker unreachable, waiting to re-register %s\n", proc->name);
+        }
+        proc->announce_ok = 0;
+      }
+      next_announce_ms = now_ms + (uint64_t)proc->announce_interval_ms;
     }
   }
   return NULL;
@@ -297,11 +358,29 @@ static int bind_in_range(zcm_socket_t *sock, int first_port, int range_size, int
 int zcm_proc_init(const char *name, zcm_socket_type_t data_type, int bind_data,
                   zcm_proc_t **out_proc, zcm_socket_t **out_data) {
   if (!name || !out_proc) return -1;
+  *out_proc = NULL;
+  if (out_data) *out_data = NULL;
+
   zcm_socket_type_t cfg_data_type = data_type;
   int cfg_bind_data = bind_data ? 1 : 0;
   int cfg_ctrl_timeout_ms = 200;
+  int announce_interval_ms = ZCM_PROC_REANNOUNCE_MS_DEFAULT;
+  const char *announce_env = getenv("ZCM_PROC_REANNOUNCE_MS");
+  if (announce_env && *announce_env) {
+    int parsed = 0;
+    if (parse_positive_int_range(announce_env, ZCM_PROC_REANNOUNCE_MS_MIN,
+                                 ZCM_PROC_REANNOUNCE_MS_MAX, &parsed) == 0) {
+      announce_interval_ms = parsed;
+    } else {
+      fprintf(stderr,
+              "zcm_proc: invalid ZCM_PROC_REANNOUNCE_MS='%s', using default %d ms\n",
+              announce_env, ZCM_PROC_REANNOUNCE_MS_DEFAULT);
+    }
+  }
+
+  int rc = -1;
   if (load_proc_config(name, &cfg_data_type, &cfg_bind_data, &cfg_ctrl_timeout_ms) != 0) {
-    return -1;
+    goto fail;
   }
 
   char *broker = NULL;
@@ -310,32 +389,32 @@ int zcm_proc_init(const char *name, zcm_socket_type_t data_type, int bind_data,
   int range_size = 0;
   if (load_domain_info(&broker, &host, &first_port, &range_size) != 0) {
     fprintf(stderr, "zcm_proc: missing ZCMDOMAIN or ZCmDomains entry\n");
-    return -1;
+    goto fail;
   }
 
   zcm_context_t *ctx = zcm_context_new();
-  if (!ctx) return -1;
+  if (!ctx) goto fail;
   zcm_node_t *node = zcm_node_new(ctx, broker);
-  if (!node) return -1;
+  if (!node) goto fail;
 
   zcm_socket_t *data = NULL;
   int data_port = -1;
   if (cfg_bind_data) {
     data = zcm_socket_new(ctx, cfg_data_type);
-    if (!data) return -1;
+    if (!data) goto fail;
     if (bind_in_range(data, first_port, range_size, &data_port, -1) != 0) {
       fprintf(stderr, "zcm_proc: data bind failed\n");
-      return -1;
+      goto fail;
     }
   }
 
   zcm_socket_t *ctrl = zcm_socket_new(ctx, ZCM_SOCK_REP);
-  if (!ctrl) return -1;
+  if (!ctrl) goto fail;
   zcm_socket_set_timeouts(ctrl, cfg_ctrl_timeout_ms);
   int ctrl_port = -1;
   if (bind_in_range(ctrl, first_port, range_size, &ctrl_port, data_port) != 0) {
     fprintf(stderr, "zcm_proc: control bind failed\n");
-    return -1;
+    goto fail;
   }
 
   const char *use_host = host ? host : "127.0.0.1";
@@ -347,38 +426,70 @@ int zcm_proc_init(const char *name, zcm_socket_type_t data_type, int bind_data,
   const char *reg_ep = (data_port > 0) ? data_reg_ep : ctrl_reg_ep;
   if (zcm_node_register_ex(node, name, reg_ep, ctrl_reg_ep, use_host, getpid()) != 0) {
     fprintf(stderr, "zcm_proc: register failed (broker not found)\n");
-    return -1;
+    goto fail;
   }
 
   zcm_proc_t *proc = calloc(1, sizeof(*proc));
-  if (!proc) return -1;
+  if (!proc) goto fail;
   proc->ctx = ctx;
   proc->node = node;
   proc->ctrl = ctrl;
   proc->data = data;
   proc->name = strdup(name);
+  proc->reg_endpoint = strdup(reg_ep);
+  proc->ctrl_reg_endpoint = strdup(ctrl_reg_ep);
+  proc->host = strdup(use_host);
+  proc->pid = getpid();
+  proc->announce_interval_ms = announce_interval_ms;
+  proc->announce_ok = 1;
   proc->stop = 0;
+  if (!proc->name || !proc->reg_endpoint || !proc->ctrl_reg_endpoint || !proc->host) {
+    free(proc->name);
+    free(proc->reg_endpoint);
+    free(proc->ctrl_reg_endpoint);
+    free(proc->host);
+    free(proc);
+    goto fail;
+  }
 
-  pthread_create(&proc->ctrl_thread, NULL, ctrl_thread_main, proc);
+  if (pthread_create(&proc->ctrl_thread, NULL, ctrl_thread_main, proc) != 0) {
+    free(proc->name);
+    free(proc->reg_endpoint);
+    free(proc->ctrl_reg_endpoint);
+    free(proc->host);
+    free(proc);
+    goto fail;
+  }
 
   *out_proc = proc;
   if (out_data) *out_data = data;
+  rc = 0;
 
+fail:
+  if (rc != 0) {
+    if (ctrl) zcm_socket_free(ctrl);
+    if (data) zcm_socket_free(data);
+    if (node) zcm_node_free(node);
+    if (ctx) zcm_context_free(ctx);
+  }
   free(broker);
   free(host);
-  return 0;
+  return rc;
 }
 
 void zcm_proc_free(zcm_proc_t *proc) {
   if (!proc) return;
-  zcm_node_unregister(proc->node, proc->name);
   proc->stop = 1;
   pthread_join(proc->ctrl_thread, NULL);
+  zcm_node_unregister(proc->node, proc->name);
   if (proc->ctrl) zcm_socket_free(proc->ctrl);
   if (proc->data) zcm_socket_free(proc->data);
   if (proc->node) zcm_node_free(proc->node);
   if (proc->ctx) zcm_context_free(proc->ctx);
   free(proc->name);
+  free(proc->reg_endpoint);
+  free(proc->ctrl_reg_endpoint);
+  free(proc->host);
   free(proc);
 }
 

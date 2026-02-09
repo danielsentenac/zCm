@@ -11,6 +11,8 @@ Launch:
 - Every `zcm_proc` is an infinite daemon.
 - It always answers requests over direct ZeroMQ `REQ/REP` semantics.
 - Default CORE behavior is `PING -> PONG`.
+- It periodically re-registers in broker so names recover after broker restart.
+  - tune interval with `ZCM_PROC_REANNOUNCE_MS` (default `1000`)
 - Optional repeated `dataSocket` entries configure bytes `PUB/SUB` roles.
 
 ## Config
