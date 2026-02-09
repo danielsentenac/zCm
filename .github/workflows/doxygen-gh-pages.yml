@@ -30,7 +30,7 @@ jobs:
         run: doxygen Doxyfile
 
       - name: Post-process theme links
-        run: ./tools/doxygen/postprocess-awesome.sh docs/_build/html
+        run: ./docs/doxygen/postprocess-awesome.sh docs/_build/html
 
       - name: Disable Jekyll
         run: touch docs/_build/html/.nojekyll
