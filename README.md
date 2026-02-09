@@ -64,9 +64,13 @@ Kill (shutdown) a registered process:
 ```bash
 ./build/tools/zcm kill NAME
 ```
-Unified process example:
+Ping a registered process (control REQ/REP):
 ```bash
-./build/examples/zcm_proc pub-msg procpub 5
+./build/tools/zcm ping NAME
+```
+Unified process daemon:
+```bash
+./build/examples/zcm_proc daemon zcmproc
 ```
 
 Broker resolution for `zcm` CLI and broker:
@@ -99,22 +103,23 @@ List via API:
 ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_list
 ```
 
-Unified `zcm_proc` modes:
+Default daemon request/reply (`PING` -> `PONG`):
+```bash
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc daemon zcmproc
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm ping zcmproc
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc req zcmproc echoclient 1 PING
+```
+
+Optional message pub/sub modes:
 ```bash
 ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc pub-msg procpub 5
 ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc sub-msg procpub procsub 5
 ```
 
-Raw bytes with the same unified process:
+Optional bytes pub/sub modes:
 ```bash
 ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc pub-bytes procbytes 5 raw-bytes-proc
 ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc sub-bytes procbytes procbytesub 5
-```
-
-Request/Reply with the same unified process:
-```bash
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc rep echoservice -1
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc req echoservice echoclient 1
 ```
 
 ## Tests

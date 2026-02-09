@@ -91,6 +91,12 @@ static void *ctrl_thread_main(void *arg) {
         zcm_socket_send_bytes(proc->ctrl, ok, strlen(ok));
         zcm_node_unregister(proc->node, proc->name);
         exit(0);
+      } else if (strcmp(ctrl_buf, "PING") == 0) {
+        const char *pong = "PONG";
+        zcm_socket_send_bytes(proc->ctrl, pong, strlen(pong));
+      } else {
+        const char *err = "ERR";
+        zcm_socket_send_bytes(proc->ctrl, err, strlen(err));
       }
     } else {
       if (proc->stop) break;

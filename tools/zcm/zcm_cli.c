@@ -14,9 +14,10 @@ static void usage(const char *prog) {
           "  %s names\n"
           "  %s send --name NAME -type TYPE -t KIND VALUE\n"
           "  %s kill NAME\n"
+          "  %s ping NAME\n"
           "\n"
           "KIND: char|short|int|long|float|double|text\n",
-          prog, prog, prog);
+          prog, prog, prog, prog);
 }
 
 static char *load_endpoint_from_config(void) {
@@ -238,12 +239,103 @@ static int do_kill(const char *endpoint, const char *name) {
     zcm_context_free(ctx);
     return 1;
   }
+  zcm_socket_set_timeouts(req, 1000);
   const char *cmd = "SHUTDOWN";
   if (zcm_socket_send_bytes(req, cmd, strlen(cmd)) != 0) {
     fprintf(stderr, "zcm: kill failed (send shutdown)\n");
+    zcm_socket_free(req);
+    zcm_node_free(node);
+    zcm_context_free(ctx);
+    return 1;
+  }
+  char reply[32] = {0};
+  size_t n = 0;
+  if (zcm_socket_recv_bytes(req, reply, sizeof(reply) - 1, &n) != 0 || n == 0) {
+    fprintf(stderr, "zcm: kill failed (no reply)\n");
+    zcm_socket_free(req);
+    zcm_node_free(node);
+    zcm_context_free(ctx);
+    return 1;
+  }
+  reply[n] = '\0';
+  if (strcmp(reply, "OK") != 0) {
+    fprintf(stderr, "zcm: kill failed (reply=%s)\n", reply);
+    zcm_socket_free(req);
+    zcm_node_free(node);
+    zcm_context_free(ctx);
+    return 1;
   }
   zcm_socket_free(req);
 
+  zcm_node_free(node);
+  zcm_context_free(ctx);
+  return 0;
+}
+
+static int do_ping(const char *endpoint, const char *name) {
+  zcm_context_t *ctx = zcm_context_new();
+  if (!ctx) return 1;
+  zcm_node_t *node = zcm_node_new(ctx, endpoint);
+  if (!node) return 1;
+
+  char ctrl_ep[512] = {0};
+  char host[256] = {0};
+  int pid = 0;
+  if (zcm_node_info(node, name, NULL, 0, ctrl_ep, sizeof(ctrl_ep), host, sizeof(host), &pid) != 0) {
+    fprintf(stderr, "zcm: ping failed (no info for %s)\n", name);
+    zcm_node_free(node);
+    zcm_context_free(ctx);
+    return 1;
+  }
+  if (ctrl_ep[0] == '\0') {
+    fprintf(stderr, "zcm: ping failed (no control endpoint for %s)\n", name);
+    zcm_node_free(node);
+    zcm_context_free(ctx);
+    return 1;
+  }
+
+  zcm_socket_t *req = zcm_socket_new(ctx, ZCM_SOCK_REQ);
+  if (!req) {
+    zcm_node_free(node);
+    zcm_context_free(ctx);
+    return 1;
+  }
+  if (zcm_socket_connect(req, ctrl_ep) != 0) {
+    fprintf(stderr, "zcm: ping failed (connect control endpoint)\n");
+    zcm_socket_free(req);
+    zcm_node_free(node);
+    zcm_context_free(ctx);
+    return 1;
+  }
+  zcm_socket_set_timeouts(req, 1000);
+  if (zcm_socket_send_bytes(req, "PING", 4) != 0) {
+    fprintf(stderr, "zcm: ping failed (send ping)\n");
+    zcm_socket_free(req);
+    zcm_node_free(node);
+    zcm_context_free(ctx);
+    return 1;
+  }
+
+  char reply[32] = {0};
+  size_t n = 0;
+  if (zcm_socket_recv_bytes(req, reply, sizeof(reply) - 1, &n) != 0 || n == 0) {
+    fprintf(stderr, "zcm: ping failed (no reply)\n");
+    zcm_socket_free(req);
+    zcm_node_free(node);
+    zcm_context_free(ctx);
+    return 1;
+  }
+  reply[n] = '\0';
+  if (strcmp(reply, "PONG") != 0) {
+    fprintf(stderr, "zcm: ping failed (reply=%s)\n", reply);
+    zcm_socket_free(req);
+    zcm_node_free(node);
+    zcm_context_free(ctx);
+    return 1;
+  }
+
+  printf("PONG %s %s %d\n", name, host, pid);
+  zcm_socket_free(req);
   zcm_node_free(node);
   zcm_context_free(ctx);
   return 0;
@@ -271,7 +363,7 @@ int main(int argc, char **argv) {
     } else if (strcmp(argv[i], "-t") == 0 && i + 1 < argc) {
       kind = argv[++i];
     } else if (!value) {
-      if (strcmp(cmd, "kill") == 0 && !name) {
+      if ((strcmp(cmd, "kill") == 0 || strcmp(cmd, "ping") == 0) && !name) {
         name = argv[i];
       } else {
         value = argv[i];
@@ -282,7 +374,10 @@ int main(int argc, char **argv) {
     }
   }
 
-  if (!cmd || (strcmp(cmd, "names") != 0 && strcmp(cmd, "send") != 0 && strcmp(cmd, "kill") != 0)) {
+  if (!cmd || (strcmp(cmd, "names") != 0 &&
+               strcmp(cmd, "send") != 0 &&
+               strcmp(cmd, "kill") != 0 &&
+               strcmp(cmd, "ping") != 0)) {
     usage(argv[0]);
     return 1;
   }
@@ -320,9 +415,12 @@ int main(int argc, char **argv) {
       free(ep);
       return 1;
     }
-    rc = do_kill(ep, name);
+    if (strcmp(cmd, "kill") == 0) {
+      rc = do_kill(ep, name);
+    } else {
+      rc = do_ping(ep, name);
+    }
   }
   free(ep);
   return rc;
 }
-#include <pthread.h>

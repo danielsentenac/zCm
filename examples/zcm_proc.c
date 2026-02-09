@@ -5,6 +5,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <strings.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -162,27 +163,31 @@ static int run_sub_bytes(const char *target, const char *self_name, int count) {
   return 0;
 }
 
-static int run_rep(const char *name, int count) {
+static int run_daemon(const char *name) {
   zcm_proc_t *proc = NULL;
   zcm_socket_t *rep = NULL;
   if (zcm_proc_init(name, ZCM_SOCK_REP, 1, &proc, &rep) != 0) return 1;
+  printf("zcm_proc daemon started: %s\n", name);
+  printf("default request/reply: PING -> PONG\n");
 
-  for (int i = 0; count < 0 || i < count; i++) {
+  for (;;) {
     zcm_msg_t *req = zcm_msg_new();
     if (!req) {
       zcm_proc_free(proc);
       return 1;
     }
+    const char *cmd = NULL;
+    int32_t req_code = 200;
     if (zcm_socket_recv_msg(rep, req) == 0) {
-      const char *text = NULL;
-      int32_t code = 0;
-      if (zcm_msg_get_text(req, &text, NULL) == 0 &&
-          zcm_msg_get_int(req, &code) == 0) {
-        printf("received query: type=%s text=%s code=%d\n",
-               zcm_msg_get_type(req), text, code);
-      } else {
-        printf("query decode error: %s\n", zcm_msg_last_error(req));
+      if (zcm_msg_get_text(req, &cmd, NULL) != 0) {
+        cmd = NULL;
       }
+      if (zcm_msg_get_int(req, &req_code) != 0) {
+        req_code = 200;
+      }
+
+      printf("received query: type=%s cmd=%s\n",
+             zcm_msg_get_type(req), cmd ? cmd : "<none>");
     }
     zcm_msg_free(req);
 
@@ -192,8 +197,14 @@ static int run_rep(const char *name, int count) {
       return 1;
     }
     zcm_msg_set_type(reply, "REPLY");
-    zcm_msg_put_text(reply, "pong");
-    zcm_msg_put_int(reply, 200);
+    if (cmd && strcasecmp(cmd, "PING") == 0) {
+      zcm_msg_put_text(reply, "PONG");
+    } else if (cmd && cmd[0]) {
+      zcm_msg_put_text(reply, "OK");
+    } else {
+      zcm_msg_put_text(reply, "ERR");
+    }
+    zcm_msg_put_int(reply, req_code);
     if (zcm_socket_send_msg(rep, reply) != 0) {
       fprintf(stderr, "reply send failed\n");
       zcm_msg_free(reply);
@@ -207,7 +218,7 @@ static int run_rep(const char *name, int count) {
   return 0;
 }
 
-static int run_req(const char *service, const char *self_name, int count) {
+static int run_req(const char *service, const char *self_name, int count, const char *request) {
   zcm_proc_t *proc = NULL;
   if (zcm_proc_init(self_name, ZCM_SOCK_REQ, 0, &proc, NULL) != 0) return 1;
 
@@ -237,7 +248,7 @@ static int run_req(const char *service, const char *self_name, int count) {
       return 1;
     }
     zcm_msg_set_type(msg, "QUERY");
-    zcm_msg_put_text(msg, "ping");
+    zcm_msg_put_text(msg, request);
     zcm_msg_put_int(msg, 42 + i);
 
     if (zcm_socket_send_msg(req, msg) != 0) {
@@ -278,37 +289,42 @@ static int run_req(const char *service, const char *self_name, int count) {
 static void usage(const char *prog) {
   fprintf(stderr,
           "usage:\n"
-          "  %s pub-msg   [name] [count]\n"
-          "  %s sub-msg   [target] [self_name] [count]\n"
-          "  %s pub-bytes [name] [count] [payload]\n"
-          "  %s sub-bytes [target] [self_name] [count]\n"
-          "  %s rep       [name] [count|-1]\n"
-          "  %s req       [service] [self_name] [count]\n",
-          prog, prog, prog, prog, prog, prog);
+          "  %s daemon    [name]\n"
+          "  %s pub-msg   [name] [count|-1]\n"
+          "  %s sub-msg   [target] [self_name] [count|-1]\n"
+          "  %s pub-bytes [name] [count|-1] [payload]\n"
+          "  %s sub-bytes [target] [self_name] [count|-1]\n"
+          "  %s req       [service] [self_name] [count] [request]\n"
+          "  %s rep       [name] (alias for daemon)\n",
+          prog, prog, prog, prog, prog, prog, prog);
 }
 
 int main(int argc, char **argv) {
   if (argc < 2) {
-    usage(argv[0]);
-    return 1;
+    return run_daemon("zcmproc");
+  }
+
+  if (strcmp(argv[1], "daemon") == 0 || strcmp(argv[1], "rep") == 0) {
+    const char *name = (argc > 2) ? argv[2] : "zcmproc";
+    return run_daemon(name);
   }
 
   if (strcmp(argv[1], "pub-msg") == 0) {
     const char *name = (argc > 2) ? argv[2] : "procpub";
-    int count = parse_int((argc > 3) ? argv[3] : NULL, 5);
+    int count = parse_int((argc > 3) ? argv[3] : NULL, -1);
     return run_pub_msg(name, count);
   }
 
   if (strcmp(argv[1], "sub-msg") == 0) {
     const char *target = (argc > 2) ? argv[2] : "procpub";
     const char *self_name = (argc > 3) ? argv[3] : "procsub";
-    int count = parse_int((argc > 4) ? argv[4] : NULL, 5);
+    int count = parse_int((argc > 4) ? argv[4] : NULL, -1);
     return run_sub_msg(target, self_name, count);
   }
 
   if (strcmp(argv[1], "pub-bytes") == 0) {
     const char *name = (argc > 2) ? argv[2] : "procbytes";
-    int count = parse_int((argc > 3) ? argv[3] : NULL, 5);
+    int count = parse_int((argc > 3) ? argv[3] : NULL, -1);
     const char *payload = (argc > 4) ? argv[4] : "raw-bytes-proc";
     return run_pub_bytes(name, count, payload);
   }
@@ -316,22 +332,17 @@ int main(int argc, char **argv) {
   if (strcmp(argv[1], "sub-bytes") == 0) {
     const char *target = (argc > 2) ? argv[2] : "procbytes";
     const char *self_name = (argc > 3) ? argv[3] : "procbytesub";
-    int count = parse_int((argc > 4) ? argv[4] : NULL, 5);
+    int count = parse_int((argc > 4) ? argv[4] : NULL, -1);
     return run_sub_bytes(target, self_name, count);
   }
 
-  if (strcmp(argv[1], "rep") == 0) {
-    const char *name = (argc > 2) ? argv[2] : "echoservice";
-    int count = parse_int((argc > 3) ? argv[3] : NULL, -1);
-    return run_rep(name, count);
-  }
-
   if (strcmp(argv[1], "req") == 0) {
-    const char *service = (argc > 2) ? argv[2] : "echoservice";
+    const char *service = (argc > 2) ? argv[2] : "zcmproc";
     const char *self_name = (argc > 3) ? argv[3] : "echoclient";
     int count = parse_int((argc > 4) ? argv[4] : NULL, 1);
+    const char *request = (argc > 5) ? argv[5] : "PING";
     if (count < 0) count = 1;
-    return run_req(service, self_name, count);
+    return run_req(service, self_name, count, request);
   }
 
   usage(argv[0]);
