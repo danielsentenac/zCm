@@ -18,6 +18,15 @@
       <xs:maxInclusive value="1000000"/>
     </xs:restriction>
   </xs:simpleType>
+  <xs:complexType name="coreHandlerType">
+    <xs:attribute name="pingRequest" type="xs:string" use="optional"/>
+    <xs:attribute name="pingReply" type="xs:string" use="optional"/>
+    <xs:attribute name="defaultReply" type="xs:string" use="optional"/>
+  </xs:complexType>
+  <xs:complexType name="typeHandlerType">
+    <xs:attribute name="name" type="xs:string" use="required"/>
+    <xs:attribute name="reply" type="xs:string" use="required"/>
+  </xs:complexType>
   <xs:element name="procConfig">
     <xs:complexType>
       <xs:sequence>
@@ -63,6 +72,14 @@
               <xs:element name="control" minOccurs="0">
                 <xs:complexType>
                   <xs:attribute name="timeoutMs" type="xs:positiveInteger" use="optional"/>
+                </xs:complexType>
+              </xs:element>
+              <xs:element name="handlers" minOccurs="0">
+                <xs:complexType>
+                  <xs:sequence>
+                    <xs:element name="core" type="coreHandlerType" minOccurs="0" maxOccurs="1"/>
+                    <xs:element name="type" type="typeHandlerType" minOccurs="0" maxOccurs="32"/>
+                  </xs:sequence>
                 </xs:complexType>
               </xs:element>
             </xs:sequence>

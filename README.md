@@ -107,6 +107,9 @@ Process config at init (required):
   - `$ZCM_PROC_CONFIG_SCHEMA`, else `config/schema/proc-config.xsd`
 - `<process @name>` is the process registration name.
 - `<runtime @mode>` selects behavior (`daemon`, `pub-msg`, `sub-msg`, `pub-bytes`, `sub-bytes`, `req`).
+- Optional `<handlers>` adds daemon reply rules:
+  - `<core pingRequest=... pingReply=... defaultReply=...>`
+  - repeated `<type name=... reply=...>`
 - Examples: `data/basic.cfg`, `docs/config/coco.cfg`, `docs/config/zcmproc.cfg`
 
 Broker resolution for `zcm` CLI and broker:

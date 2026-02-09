@@ -29,6 +29,7 @@ Required nodes:
 
 Optional node:
 - `<control @timeoutMs>`
+- `<handlers>` (daemon/rep modes)
 
 Runtime attributes:
 - `mode`: `daemon`, `rep`, `pub-msg`, `sub-msg`, `pub-bytes`, `sub-bytes`, `req`
@@ -36,6 +37,14 @@ Runtime attributes:
 - `count`: optional (`-1` means infinite where supported)
 - `payload`: optional for `pub-bytes` (default `raw-bytes-proc`)
 - `request`: optional for `req` (default `PING`)
+
+Handlers:
+- `<handlers><core .../></handlers>` configures CORE request handling.
+- `<handlers><type name="..." reply="..."/></handlers>` adds TYPE-specific replies.
+- Reply selection order in daemon/rep:
+  1. matching TYPE handler
+  2. CORE ping handler (`pingRequest -> pingReply`)
+  3. CORE default reply (`defaultReply`)
 
 ## Examples
 Daemon (`PING -> PONG`):
@@ -46,6 +55,10 @@ Daemon (`PING -> PONG`):
     <runtime mode="daemon"/>
     <dataSocket type="REP" bind="true"/>
     <control timeoutMs="200"/>
+    <handlers>
+      <core pingRequest="PING" pingReply="PONG" defaultReply="OK"/>
+      <type name="ALARM" reply="ALARM_ACK"/>
+    </handlers>
   </process>
 </procConfig>
 ```

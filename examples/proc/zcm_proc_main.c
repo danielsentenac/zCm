@@ -17,6 +17,13 @@
 #define ZCM_PROC_CONFIG_SCHEMA_DEFAULT "config/schema/proc-config.xsd"
 #endif
 
+#define ZCM_TYPE_HANDLER_MAX 32
+
+typedef struct type_handler_cfg {
+  char name[64];
+  char reply[128];
+} type_handler_cfg_t;
+
 typedef struct runtime_cfg {
   char name[128];
   char mode[32];
@@ -24,6 +31,11 @@ typedef struct runtime_cfg {
   int count;
   char payload[256];
   char request[256];
+  char core_ping_request[64];
+  char core_ping_reply[64];
+  char core_default_reply[64];
+  type_handler_cfg_t type_handlers[ZCM_TYPE_HANDLER_MAX];
+  size_t type_handler_count;
 } runtime_cfg_t;
 
 static void trim_ws_inplace(char *text) {
@@ -129,6 +141,39 @@ static int run_xmllint_xpath(const char *config_path, const char *xpath_expr,
   return 0;
 }
 
+static int load_type_handlers(const char *cfg_path, runtime_cfg_t *cfg) {
+  if (!cfg_path || !cfg) return -1;
+  cfg->type_handler_count = 0;
+
+  for (int i = 1; i <= ZCM_TYPE_HANDLER_MAX; i++) {
+    char xpath[128];
+    char name[64] = {0};
+    char reply[128] = {0};
+
+    if (snprintf(xpath, sizeof(xpath), "string(/procConfig/process/handlers/type[%d]/@name)", i) >= (int)sizeof(xpath)) {
+      return -1;
+    }
+    if (run_xmllint_xpath(cfg_path, xpath, name, sizeof(name)) != 0 || !name[0]) {
+      break;
+    }
+
+    if (snprintf(xpath, sizeof(xpath), "string(/procConfig/process/handlers/type[%d]/@reply)", i) >= (int)sizeof(xpath)) {
+      return -1;
+    }
+    if (run_xmllint_xpath(cfg_path, xpath, reply, sizeof(reply)) != 0 || !reply[0]) {
+      fprintf(stderr, "zcm_proc: missing handlers/type[%d]@reply in %s\n", i, cfg_path);
+      return -1;
+    }
+
+    size_t idx = cfg->type_handler_count;
+    snprintf(cfg->type_handlers[idx].name, sizeof(cfg->type_handlers[idx].name), "%s", name);
+    snprintf(cfg->type_handlers[idx].reply, sizeof(cfg->type_handlers[idx].reply), "%s", reply);
+    cfg->type_handler_count++;
+  }
+
+  return 0;
+}
+
 static int load_runtime_config(const char *cfg_path, runtime_cfg_t *cfg) {
   if (!cfg_path || !cfg || !*cfg_path) return -1;
   if (access(cfg_path, R_OK) != 0) {
@@ -151,6 +196,9 @@ static int load_runtime_config(const char *cfg_path, runtime_cfg_t *cfg) {
   cfg->count = -1;
   strncpy(cfg->payload, "raw-bytes-proc", sizeof(cfg->payload) - 1);
   strncpy(cfg->request, "PING", sizeof(cfg->request) - 1);
+  strncpy(cfg->core_ping_request, "PING", sizeof(cfg->core_ping_request) - 1);
+  strncpy(cfg->core_ping_reply, "PONG", sizeof(cfg->core_ping_reply) - 1);
+  strncpy(cfg->core_default_reply, "OK", sizeof(cfg->core_default_reply) - 1);
 
   if (run_xmllint_xpath(cfg_path, "string(/procConfig/process/@name)", cfg->name, sizeof(cfg->name)) != 0 || !cfg->name[0]) {
     fprintf(stderr, "zcm_proc: missing process@name in %s\n", cfg_path);
@@ -177,6 +225,18 @@ static int load_runtime_config(const char *cfg_path, runtime_cfg_t *cfg) {
 
   (void)run_xmllint_xpath(cfg_path, "string(/procConfig/process/runtime/@request)", cfg->request, sizeof(cfg->request));
   if (!cfg->request[0]) strncpy(cfg->request, "PING", sizeof(cfg->request) - 1);
+
+  char handler_value[128] = {0};
+  if (run_xmllint_xpath(cfg_path, "string(/procConfig/process/handlers/core/@pingRequest)", handler_value, sizeof(handler_value)) == 0 && handler_value[0]) {
+    snprintf(cfg->core_ping_request, sizeof(cfg->core_ping_request), "%s", handler_value);
+  }
+  if (run_xmllint_xpath(cfg_path, "string(/procConfig/process/handlers/core/@pingReply)", handler_value, sizeof(handler_value)) == 0 && handler_value[0]) {
+    snprintf(cfg->core_ping_reply, sizeof(cfg->core_ping_reply), "%s", handler_value);
+  }
+  if (run_xmllint_xpath(cfg_path, "string(/procConfig/process/handlers/core/@defaultReply)", handler_value, sizeof(handler_value)) == 0 && handler_value[0]) {
+    snprintf(cfg->core_default_reply, sizeof(cfg->core_default_reply), "%s", handler_value);
+  }
+  if (load_type_handlers(cfg_path, cfg) != 0) return -1;
 
   if (strcmp(cfg->mode, "daemon") == 0 || strcmp(cfg->mode, "rep") == 0) return 0;
   if (strcmp(cfg->mode, "pub-msg") == 0 || strcmp(cfg->mode, "pub-bytes") == 0) return 0;
@@ -216,6 +276,16 @@ static int text_equals_nocase(const char *text, uint32_t len, const char *lit) {
   size_t n = strlen(lit);
   if (len != n) return 0;
   return strncasecmp(text, lit, n) == 0;
+}
+
+static const char *lookup_type_reply(const runtime_cfg_t *cfg, const char *type_name) {
+  if (!cfg || !type_name || !*type_name) return NULL;
+  for (size_t i = 0; i < cfg->type_handler_count; i++) {
+    if (strcasecmp(cfg->type_handlers[i].name, type_name) == 0) {
+      return cfg->type_handlers[i].reply;
+    }
+  }
+  return NULL;
 }
 
 static int run_pub_msg(const char *name, int count) {
@@ -373,12 +443,17 @@ static int run_sub_bytes(const char *target, const char *self_name, int count) {
   return 0;
 }
 
-static int run_daemon(const char *name) {
+static int run_daemon(const runtime_cfg_t *cfg) {
+  if (!cfg) return 1;
   zcm_proc_t *proc = NULL;
   zcm_socket_t *rep = NULL;
-  if (zcm_proc_init(name, ZCM_SOCK_REP, 1, &proc, &rep) != 0) return 1;
-  printf("zcm_proc daemon started: %s\n", name);
-  printf("default request/reply: PING -> PONG\n");
+  if (zcm_proc_init(cfg->name, ZCM_SOCK_REP, 1, &proc, &rep) != 0) return 1;
+  printf("zcm_proc daemon started: %s\n", cfg->name);
+  printf("core handler: %s -> %s (default=%s)\n",
+         cfg->core_ping_request, cfg->core_ping_reply, cfg->core_default_reply);
+  if (cfg->type_handler_count > 0) {
+    printf("type handlers loaded: %zu\n", cfg->type_handler_count);
+  }
 
   for (;;) {
     zcm_msg_t *req = zcm_msg_new();
@@ -390,7 +465,10 @@ static int run_daemon(const char *name) {
     uint32_t cmd_len = 0;
     int32_t req_code = 200;
     int core_request = 0;
+    const char *req_type = "";
     if (zcm_socket_recv_msg(rep, req) == 0) {
+      req_type = zcm_msg_get_type(req);
+      if (!req_type) req_type = "";
       zcm_core_value_t core;
       zcm_msg_rewind(req);
       if (zcm_msg_get_core(req, &core) == 0) {
@@ -398,14 +476,13 @@ static int run_daemon(const char *name) {
         if (core.kind == ZCM_CORE_VALUE_TEXT) {
           cmd = core.text;
           cmd_len = core.text_len;
-          printf("received query: type=%s core.text=%.*s\n",
-                 zcm_msg_get_type(req), (int)cmd_len, cmd);
+          printf("received query: type=%s core.text=%.*s\n", req_type, (int)cmd_len, cmd);
         } else if (core.kind == ZCM_CORE_VALUE_DOUBLE) {
-          printf("received query: type=%s core.double=%f\n", zcm_msg_get_type(req), core.d);
+          printf("received query: type=%s core.double=%f\n", req_type, core.d);
         } else if (core.kind == ZCM_CORE_VALUE_FLOAT) {
-          printf("received query: type=%s core.float=%f\n", zcm_msg_get_type(req), core.f);
+          printf("received query: type=%s core.float=%f\n", req_type, core.f);
         } else if (core.kind == ZCM_CORE_VALUE_INT) {
-          printf("received query: type=%s core.int=%d\n", zcm_msg_get_type(req), core.i);
+          printf("received query: type=%s core.int=%d\n", req_type, core.i);
         }
       } else {
         zcm_msg_rewind(req);
@@ -416,8 +493,7 @@ static int run_daemon(const char *name) {
         if (zcm_msg_get_int(req, &req_code) != 0) {
           req_code = 200;
         }
-        printf("received query: type=%s cmd=%s\n",
-               zcm_msg_get_type(req), cmd ? cmd : "<none>");
+        printf("received query: type=%s cmd=%s\n", req_type, cmd ? cmd : "<none>");
       }
     }
     zcm_msg_free(req);
@@ -429,12 +505,15 @@ static int run_daemon(const char *name) {
     }
     zcm_msg_set_type(reply, "REPLY");
     const char *reply_text = "ERR";
-    if (cmd && text_equals_nocase(cmd, cmd_len, "PING")) {
-      reply_text = "PONG";
+    const char *type_reply = lookup_type_reply(cfg, req_type);
+    if (type_reply) {
+      reply_text = type_reply;
+    } else if (cmd && text_equals_nocase(cmd, cmd_len, cfg->core_ping_request)) {
+      reply_text = cfg->core_ping_reply;
     } else if (core_request) {
-      reply_text = "OK";
+      reply_text = cfg->core_default_reply;
     } else if (cmd && cmd_len > 0) {
-      reply_text = "OK";
+      reply_text = cfg->core_default_reply;
     }
 
     if (core_request) zcm_msg_put_core_text(reply, reply_text);
@@ -543,7 +622,7 @@ int main(int argc, char **argv) {
   }
 
   if (strcmp(cfg.mode, "daemon") == 0 || strcmp(cfg.mode, "rep") == 0) {
-    return run_daemon(cfg.name);
+    return run_daemon(&cfg);
   }
   if (strcmp(cfg.mode, "pub-msg") == 0) {
     return run_pub_msg(cfg.name, cfg.count);
