@@ -32,10 +32,19 @@
         <xs:element name="process">
           <xs:complexType>
             <xs:sequence>
-              <xs:element name="dataSocket" minOccurs="0" maxOccurs="1">
+              <xs:element name="dataSocket" minOccurs="0" maxOccurs="16">
                 <xs:complexType>
-                  <xs:attribute name="pubPort" type="xs:positiveInteger" use="optional"/>
-                  <xs:attribute name="subTargets" type="xs:string" use="optional"/>
+                  <xs:attribute name="type" use="required">
+                    <xs:simpleType>
+                      <xs:restriction base="xs:string">
+                        <xs:enumeration value="PUB"/>
+                        <xs:enumeration value="SUB"/>
+                      </xs:restriction>
+                    </xs:simpleType>
+                  </xs:attribute>
+                  <xs:attribute name="port" type="xs:positiveInteger" use="optional"/>
+                  <xs:attribute name="target" type="xs:string" use="optional"/>
+                  <xs:attribute name="targets" type="xs:string" use="optional"/>
                   <xs:attribute name="payload" type="xs:string" use="optional"/>
                   <xs:attribute name="intervalMs" type="xs:positiveInteger" use="optional"/>
                 </xs:complexType>

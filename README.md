@@ -108,10 +108,11 @@ Process config at init (required):
   - `$ZCM_PROC_CONFIG_SCHEMA`, else `config/schema/proc-config.xsd`
 - `<process @name>` is the process registration name.
 - `zcm_proc` is always an infinite daemon (no runtime mode).
-- Optional single `<dataSocket>` configures bytes `PUB/SUB` together:
-  - `pubPort=<tcp-port>` for local publisher endpoint
-  - `subTargets=<proc-a,proc-b,...>` to subscribe to multiple publishers
-  - each `subTargets` publisher port is discovered via default request `DATA_PORT`
+- Optional repeated `<dataSocket>` configures bytes `PUB/SUB`:
+  - `type=PUB|SUB`
+  - `PUB` uses `port=<tcp-port>` and optional `payload`, `intervalMs`
+  - `SUB` uses `targets=<proc-a,proc-b,...>` (or legacy `target=<proc-name>`)
+  - each `SUB` target publisher port is discovered via default request `DATA_PORT`
 - Optional `<handlers>` adds request reply rules:
   - `<core pingRequest=... pingReply=... defaultReply=...>`
   - repeated `<type name=... reply=...><arg kind=.../>...</type>` with ordered payload args

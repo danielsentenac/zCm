@@ -286,6 +286,19 @@ static int parse_interval_str(const char *text, int *out) {
   return 0;
 }
 
+static int parse_data_socket_kind(const char *text, data_socket_kind_t *out) {
+  if (!text || !*text || !out) return -1;
+  if (strcasecmp(text, "PUB") == 0) {
+    *out = DATA_SOCKET_PUB;
+    return 0;
+  }
+  if (strcasecmp(text, "SUB") == 0) {
+    *out = DATA_SOCKET_SUB;
+    return 0;
+  }
+  return -1;
+}
+
 static void trim_token_inplace(char *text) {
   if (!text) return;
   char *start = text;
@@ -299,57 +312,143 @@ static int load_data_sockets(const char *cfg_path, runtime_cfg_t *cfg) {
   if (!cfg_path || !cfg) return -1;
   cfg->data_socket_count = 0;
 
-  char value[512] = {0};
-  char payload[256] = "raw-bytes-proc";
-  int interval_ms = 1000;
-  int pub_port = 0;
+  for (int i = 1; i <= ZCM_DATA_SOCKET_MAX; i++) {
+    char xpath[160];
+    char value[512] = {0};
+    data_socket_kind_t kind;
+    int port = 0;
+    int has_port = 0;
+    int has_payload = 0;
+    int has_interval = 0;
+    char payload[256] = "raw-bytes-proc";
+    int interval_ms = 1000;
+    char target_single[128] = {0};
+    char target_multi[512] = {0};
 
-  if (run_xmllint_xpath(cfg_path, "string(/procConfig/process/dataSocket/@payload)", value, sizeof(value)) == 0 &&
-      value[0]) {
-    snprintf(payload, sizeof(payload), "%s", value);
-  }
-  value[0] = '\0';
-  if (run_xmllint_xpath(cfg_path, "string(/procConfig/process/dataSocket/@intervalMs)", value, sizeof(value)) == 0 &&
-      value[0]) {
-    if (parse_interval_str(value, &interval_ms) != 0) {
-      fprintf(stderr, "zcm_proc: invalid dataSocket@intervalMs in %s\n", cfg_path);
+    if (snprintf(xpath, sizeof(xpath),
+                 "string(/procConfig/process/dataSocket[%d]/@type)", i) >= (int)sizeof(xpath)) {
       return -1;
     }
-  }
-
-  value[0] = '\0';
-  if (run_xmllint_xpath(cfg_path, "string(/procConfig/process/dataSocket/@pubPort)", value, sizeof(value)) == 0 &&
-      value[0]) {
-    if (parse_port_str(value, &pub_port) != 0) {
-      fprintf(stderr, "zcm_proc: invalid dataSocket@pubPort in %s\n", cfg_path);
+    if (run_xmllint_xpath(cfg_path, xpath, value, sizeof(value)) != 0 || !value[0]) break;
+    if (parse_data_socket_kind(value, &kind) != 0) {
+      fprintf(stderr, "zcm_proc: invalid dataSocket[%d]@type in %s\n", i, cfg_path);
       return -1;
     }
-    if (cfg->data_socket_count >= ZCM_DATA_SOCKET_MAX) return -1;
-    data_socket_cfg_t *sock = &cfg->data_sockets[cfg->data_socket_count++];
-    memset(sock, 0, sizeof(*sock));
-    sock->kind = DATA_SOCKET_PUB;
-    sock->port = pub_port;
-    sock->interval_ms = interval_ms;
-    snprintf(sock->payload, sizeof(sock->payload), "%s", payload);
-  }
 
-  value[0] = '\0';
-  if (run_xmllint_xpath(cfg_path, "string(/procConfig/process/dataSocket/@subTargets)", value, sizeof(value)) == 0 &&
-      value[0]) {
-    char targets[512];
-    snprintf(targets, sizeof(targets), "%s", value);
+    if (snprintf(xpath, sizeof(xpath),
+                 "string(/procConfig/process/dataSocket[%d]/@port)", i) >= (int)sizeof(xpath)) {
+      return -1;
+    }
+    value[0] = '\0';
+    if (run_xmllint_xpath(cfg_path, xpath, value, sizeof(value)) == 0 && value[0]) {
+      if (parse_port_str(value, &port) != 0) {
+        fprintf(stderr, "zcm_proc: invalid dataSocket[%d]@port in %s\n", i, cfg_path);
+        return -1;
+      }
+      has_port = 1;
+    }
+
+    if (snprintf(xpath, sizeof(xpath),
+                 "string(/procConfig/process/dataSocket[%d]/@payload)", i) >= (int)sizeof(xpath)) {
+      return -1;
+    }
+    value[0] = '\0';
+    if (run_xmllint_xpath(cfg_path, xpath, value, sizeof(value)) == 0 && value[0]) {
+      snprintf(payload, sizeof(payload), "%s", value);
+      has_payload = 1;
+    }
+
+    if (snprintf(xpath, sizeof(xpath),
+                 "string(/procConfig/process/dataSocket[%d]/@intervalMs)", i) >= (int)sizeof(xpath)) {
+      return -1;
+    }
+    value[0] = '\0';
+    if (run_xmllint_xpath(cfg_path, xpath, value, sizeof(value)) == 0 && value[0]) {
+      if (parse_interval_str(value, &interval_ms) != 0) {
+        fprintf(stderr, "zcm_proc: invalid dataSocket[%d]@intervalMs in %s\n", i, cfg_path);
+        return -1;
+      }
+      has_interval = 1;
+    }
+
+    if (snprintf(xpath, sizeof(xpath),
+                 "string(/procConfig/process/dataSocket[%d]/@target)", i) >= (int)sizeof(xpath)) {
+      return -1;
+    }
+    if (run_xmllint_xpath(cfg_path, xpath, target_single, sizeof(target_single)) == 0) {
+      trim_token_inplace(target_single);
+    }
+
+    if (snprintf(xpath, sizeof(xpath),
+                 "string(/procConfig/process/dataSocket[%d]/@targets)", i) >= (int)sizeof(xpath)) {
+      return -1;
+    }
+    if (run_xmllint_xpath(cfg_path, xpath, target_multi, sizeof(target_multi)) == 0) {
+      trim_token_inplace(target_multi);
+    }
+
+    if (kind == DATA_SOCKET_PUB) {
+      if (!has_port || port <= 0) {
+        fprintf(stderr, "zcm_proc: dataSocket[%d] PUB requires @port in %s\n", i, cfg_path);
+        return -1;
+      }
+      if (target_single[0] || target_multi[0]) {
+        fprintf(stderr, "zcm_proc: dataSocket[%d] PUB does not allow @target/@targets in %s\n", i, cfg_path);
+        return -1;
+      }
+      if (cfg->data_socket_count >= ZCM_DATA_SOCKET_MAX) {
+        fprintf(stderr, "zcm_proc: too many data sockets in %s (max=%d)\n", cfg_path, ZCM_DATA_SOCKET_MAX);
+        return -1;
+      }
+      data_socket_cfg_t *sock = &cfg->data_sockets[cfg->data_socket_count++];
+      memset(sock, 0, sizeof(*sock));
+      sock->kind = DATA_SOCKET_PUB;
+      sock->port = port;
+      sock->interval_ms = interval_ms;
+      snprintf(sock->payload, sizeof(sock->payload), "%s", payload);
+      continue;
+    }
+
+    if (has_port) {
+      fprintf(stderr, "zcm_proc: dataSocket[%d] SUB must not define @port in %s\n", i, cfg_path);
+      return -1;
+    }
+    if (has_payload || has_interval) {
+      fprintf(stderr, "zcm_proc: dataSocket[%d] SUB does not allow @payload/@intervalMs in %s\n", i, cfg_path);
+      return -1;
+    }
+
+    char targets_joined[640] = {0};
+    if (target_multi[0]) snprintf(targets_joined, sizeof(targets_joined), "%s", target_multi);
+    if (target_single[0]) {
+      if (targets_joined[0]) strncat(targets_joined, ",", sizeof(targets_joined) - strlen(targets_joined) - 1);
+      strncat(targets_joined, target_single, sizeof(targets_joined) - strlen(targets_joined) - 1);
+    }
+    if (!targets_joined[0]) {
+      fprintf(stderr, "zcm_proc: dataSocket[%d] SUB requires @targets (or @target) in %s\n", i, cfg_path);
+      return -1;
+    }
+
+    char tokens[640];
+    snprintf(tokens, sizeof(tokens), "%s", targets_joined);
     char *saveptr = NULL;
-    for (char *tok = strtok_r(targets, ",", &saveptr); tok; tok = strtok_r(NULL, ",", &saveptr)) {
+    int added = 0;
+    for (char *tok = strtok_r(tokens, ",", &saveptr); tok; tok = strtok_r(NULL, ",", &saveptr)) {
       trim_token_inplace(tok);
       if (!tok[0]) continue;
       if (cfg->data_socket_count >= ZCM_DATA_SOCKET_MAX) {
-        fprintf(stderr, "zcm_proc: too many subTargets in %s (max=%d)\n", cfg_path, ZCM_DATA_SOCKET_MAX);
+        fprintf(stderr, "zcm_proc: too many SUB targets in %s (max=%d)\n", cfg_path, ZCM_DATA_SOCKET_MAX);
         return -1;
       }
       data_socket_cfg_t *sock = &cfg->data_sockets[cfg->data_socket_count++];
       memset(sock, 0, sizeof(*sock));
       sock->kind = DATA_SOCKET_SUB;
       snprintf(sock->target, sizeof(sock->target), "%s", tok);
+      added = 1;
+    }
+    if (!added) {
+      fprintf(stderr, "zcm_proc: dataSocket[%d] SUB has empty @targets in %s\n", i, cfg_path);
+      return -1;
     }
   }
 
