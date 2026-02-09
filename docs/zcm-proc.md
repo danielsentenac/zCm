@@ -11,7 +11,7 @@ Launch:
 - Every `zcm_proc` is an infinite daemon.
 - It always answers requests over direct ZeroMQ `REQ/REP` semantics.
 - Default CORE behavior is `PING -> PONG`.
-- Optional `dataSocket` entries configure bytes `PUB/SUB` roles.
+- Optional single `dataSocket` configures bytes `PUB/SUB` roles.
 
 ## Config
 Validation schema:
@@ -21,14 +21,13 @@ Required:
 - `<process @name>`
 
 Optional:
-- repeated `<dataSocket .../>` for `PUB/SUB`
+- single `<dataSocket .../>` for all data path config
 - `<control @timeoutMs>`
 - `<handlers>`
 
 `dataSocket` attributes:
-- `type`: `PUB` or `SUB`
-- `port`: required for `PUB` only
-- `target`: required for `SUB` (publisher proc name)
+- `pubPort`: optional publisher port for this proc
+- `subTargets`: optional comma-separated publisher names to subscribe to
 - `payload`: optional `PUB` payload (default `raw-bytes-proc`)
 - `intervalMs`: optional `PUB` period (default `1000`)
 
@@ -38,15 +37,14 @@ Handlers:
 - `arg kind`: `text`, `double`, `float`, `int`
 - TYPE payload order is strict.
 - Malformed TYPE payload reply: `ERROR` with expected format.
-- `SUB` discovers publisher port by sending default request `DATA_PORT` to target.
+- each `subTargets` entry discovers publisher port by sending default request `DATA_PORT`.
 
 ## Example
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <procConfig>
   <process name="basic">
-    <dataSocket type="PUB" port="7301" payload="basic-pub" intervalMs="1000"/>
-    <dataSocket type="SUB" target="coco"/>
+    <dataSocket pubPort="7301" subTargets="coco, sensorA, sensorB" payload="basic-pub" intervalMs="1000"/>
     <control timeoutMs="200"/>
     <handlers>
       <core pingRequest="PING" pingReply="PONG" defaultReply="OK"/>

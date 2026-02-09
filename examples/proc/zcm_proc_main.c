@@ -286,105 +286,73 @@ static int parse_interval_str(const char *text, int *out) {
   return 0;
 }
 
-static int parse_data_socket_kind(const char *text, data_socket_kind_t *out) {
-  if (!text || !*text || !out) return -1;
-  if (strcasecmp(text, "PUB") == 0) {
-    *out = DATA_SOCKET_PUB;
-    return 0;
-  }
-  if (strcasecmp(text, "SUB") == 0) {
-    *out = DATA_SOCKET_SUB;
-    return 0;
-  }
-  return -1;
+static void trim_token_inplace(char *text) {
+  if (!text) return;
+  char *start = text;
+  while (*start && isspace((unsigned char)*start)) start++;
+  if (start != text) memmove(text, start, strlen(start) + 1);
+  size_t n = strlen(text);
+  while (n > 0 && isspace((unsigned char)text[n - 1])) text[--n] = '\0';
 }
 
 static int load_data_sockets(const char *cfg_path, runtime_cfg_t *cfg) {
   if (!cfg_path || !cfg) return -1;
   cfg->data_socket_count = 0;
 
-  for (int i = 1; i <= ZCM_DATA_SOCKET_MAX; i++) {
-    char xpath[160];
-    char value[256] = {0};
+  char value[512] = {0};
+  char payload[256] = "raw-bytes-proc";
+  int interval_ms = 1000;
+  int pub_port = 0;
 
-    if (snprintf(xpath, sizeof(xpath),
-                 "string(/procConfig/process/dataSocket[%d]/@type)", i) >= (int)sizeof(xpath)) {
-      return -1;
-    }
-    if (run_xmllint_xpath(cfg_path, xpath, value, sizeof(value)) != 0 || !value[0]) break;
-
-    size_t idx = cfg->data_socket_count;
-    data_socket_cfg_t *sock = &cfg->data_sockets[idx];
-    memset(sock, 0, sizeof(*sock));
-    sock->interval_ms = 1000;
-    snprintf(sock->payload, sizeof(sock->payload), "raw-bytes-proc");
-
-    if (parse_data_socket_kind(value, &sock->kind) != 0) {
-      fprintf(stderr, "zcm_proc: invalid dataSocket[%d]@type in %s\n", i, cfg_path);
-      return -1;
-    }
-
-    if (snprintf(xpath, sizeof(xpath),
-                 "string(/procConfig/process/dataSocket[%d]/@port)", i) >= (int)sizeof(xpath)) {
-      return -1;
-    }
-    value[0] = '\0';
-    if (run_xmllint_xpath(cfg_path, xpath, value, sizeof(value)) == 0 && value[0]) {
-      if (parse_port_str(value, &sock->port) != 0) {
-        fprintf(stderr, "zcm_proc: invalid dataSocket[%d]@port in %s\n", i, cfg_path);
-        return -1;
-      }
-    }
-
-    if (snprintf(xpath, sizeof(xpath),
-                 "string(/procConfig/process/dataSocket[%d]/@target)", i) >= (int)sizeof(xpath)) {
-      return -1;
-    }
-    value[0] = '\0';
-    if (run_xmllint_xpath(cfg_path, xpath, value, sizeof(value)) == 0 && value[0]) {
-      snprintf(sock->target, sizeof(sock->target), "%s", value);
-    }
-
-    if (snprintf(xpath, sizeof(xpath),
-                 "string(/procConfig/process/dataSocket[%d]/@payload)", i) >= (int)sizeof(xpath)) {
-      return -1;
-    }
-    value[0] = '\0';
-    if (run_xmllint_xpath(cfg_path, xpath, value, sizeof(value)) == 0 && value[0]) {
-      snprintf(sock->payload, sizeof(sock->payload), "%s", value);
-    }
-
-    if (snprintf(xpath, sizeof(xpath),
-                 "string(/procConfig/process/dataSocket[%d]/@intervalMs)", i) >= (int)sizeof(xpath)) {
-      return -1;
-    }
-    value[0] = '\0';
-    if (run_xmllint_xpath(cfg_path, xpath, value, sizeof(value)) == 0 && value[0]) {
-      if (parse_interval_str(value, &sock->interval_ms) != 0) {
-        fprintf(stderr, "zcm_proc: invalid dataSocket[%d]@intervalMs in %s\n", i, cfg_path);
-        return -1;
-      }
-    }
-
-    if (sock->kind == DATA_SOCKET_SUB && !sock->target[0]) {
-      fprintf(stderr, "zcm_proc: dataSocket[%d] target required for SUB in %s\n", i, cfg_path);
-      return -1;
-    }
-    if (sock->kind == DATA_SOCKET_SUB && sock->port > 0) {
-      fprintf(stderr, "zcm_proc: dataSocket[%d] SUB must not define @port in %s\n", i, cfg_path);
-      return -1;
-    }
-    if (sock->kind == DATA_SOCKET_PUB && sock->target[0]) {
-      fprintf(stderr, "zcm_proc: dataSocket[%d] target not allowed for PUB in %s\n", i, cfg_path);
-      return -1;
-    }
-    if (sock->kind == DATA_SOCKET_PUB && sock->port <= 0) {
-      fprintf(stderr, "zcm_proc: dataSocket[%d] PUB requires @port in %s\n", i, cfg_path);
-      return -1;
-    }
-
-    cfg->data_socket_count++;
+  if (run_xmllint_xpath(cfg_path, "string(/procConfig/process/dataSocket/@payload)", value, sizeof(value)) == 0 &&
+      value[0]) {
+    snprintf(payload, sizeof(payload), "%s", value);
   }
+  value[0] = '\0';
+  if (run_xmllint_xpath(cfg_path, "string(/procConfig/process/dataSocket/@intervalMs)", value, sizeof(value)) == 0 &&
+      value[0]) {
+    if (parse_interval_str(value, &interval_ms) != 0) {
+      fprintf(stderr, "zcm_proc: invalid dataSocket@intervalMs in %s\n", cfg_path);
+      return -1;
+    }
+  }
+
+  value[0] = '\0';
+  if (run_xmllint_xpath(cfg_path, "string(/procConfig/process/dataSocket/@pubPort)", value, sizeof(value)) == 0 &&
+      value[0]) {
+    if (parse_port_str(value, &pub_port) != 0) {
+      fprintf(stderr, "zcm_proc: invalid dataSocket@pubPort in %s\n", cfg_path);
+      return -1;
+    }
+    if (cfg->data_socket_count >= ZCM_DATA_SOCKET_MAX) return -1;
+    data_socket_cfg_t *sock = &cfg->data_sockets[cfg->data_socket_count++];
+    memset(sock, 0, sizeof(*sock));
+    sock->kind = DATA_SOCKET_PUB;
+    sock->port = pub_port;
+    sock->interval_ms = interval_ms;
+    snprintf(sock->payload, sizeof(sock->payload), "%s", payload);
+  }
+
+  value[0] = '\0';
+  if (run_xmllint_xpath(cfg_path, "string(/procConfig/process/dataSocket/@subTargets)", value, sizeof(value)) == 0 &&
+      value[0]) {
+    char targets[512];
+    snprintf(targets, sizeof(targets), "%s", value);
+    char *saveptr = NULL;
+    for (char *tok = strtok_r(targets, ",", &saveptr); tok; tok = strtok_r(NULL, ",", &saveptr)) {
+      trim_token_inplace(tok);
+      if (!tok[0]) continue;
+      if (cfg->data_socket_count >= ZCM_DATA_SOCKET_MAX) {
+        fprintf(stderr, "zcm_proc: too many subTargets in %s (max=%d)\n", cfg_path, ZCM_DATA_SOCKET_MAX);
+        return -1;
+      }
+      data_socket_cfg_t *sock = &cfg->data_sockets[cfg->data_socket_count++];
+      memset(sock, 0, sizeof(*sock));
+      sock->kind = DATA_SOCKET_SUB;
+      snprintf(sock->target, sizeof(sock->target), "%s", tok);
+    }
+  }
+
   return 0;
 }
 
@@ -523,7 +491,6 @@ static int decode_type_payload(zcm_msg_t *msg, const type_handler_cfg_t *handler
 
 typedef struct data_socket_worker_ctx {
   zcm_proc_t *proc;
-  const runtime_cfg_t *cfg;
   char proc_name[128];
   data_socket_cfg_t sock;
 } data_socket_worker_ctx_t;
@@ -717,7 +684,6 @@ static void start_data_socket_workers(const runtime_cfg_t *cfg, zcm_proc_t *proc
     data_socket_worker_ctx_t *ctx = (data_socket_worker_ctx_t *)calloc(1, sizeof(*ctx));
     if (!ctx) continue;
     ctx->proc = proc;
-    ctx->cfg = cfg;
     snprintf(ctx->proc_name, sizeof(ctx->proc_name), "%s", cfg->name);
     ctx->sock = cfg->data_sockets[i];
 
