@@ -37,6 +37,7 @@ struct zcm_proc {
   int announce_interval_ms;
   int announce_ok;
   pthread_t ctrl_thread;
+  pthread_t announce_thread;
   int stop;
 };
 
@@ -65,6 +66,34 @@ static int proc_register_ex(struct zcm_proc *proc) {
                               proc->reg_endpoint,
                               proc->ctrl_reg_endpoint,
                               proc->host, proc->pid);
+}
+
+static void *announce_thread_main(void *arg) {
+  struct zcm_proc *proc = (struct zcm_proc *)arg;
+  uint64_t next_announce_ms = monotonic_ms() + (uint64_t)proc->announce_interval_ms;
+
+  for (;;) {
+    if (proc->stop) break;
+    uint64_t now_ms = monotonic_ms();
+    if (now_ms != 0 && now_ms >= next_announce_ms) {
+      if (proc_register_ex(proc) == 0) {
+        if (!proc->announce_ok) {
+          printf("zcm_proc: broker reachable, re-registered %s\n", proc->name);
+          fflush(stdout);
+        }
+        proc->announce_ok = 1;
+      } else {
+        if (proc->announce_ok) {
+          fprintf(stderr, "zcm_proc: broker unreachable, waiting to re-register %s\n", proc->name);
+        }
+        proc->announce_ok = 0;
+      }
+      next_announce_ms = now_ms + (uint64_t)proc->announce_interval_ms;
+      continue;
+    }
+    usleep(50 * 1000);
+  }
+  return NULL;
 }
 
 static void trim_ws_inplace(char *text) {
@@ -293,7 +322,6 @@ static int load_domain_info(char **broker_ep, char **host_out, int *first_port, 
 
 static void *ctrl_thread_main(void *arg) {
   struct zcm_proc *proc = (struct zcm_proc *)arg;
-  uint64_t next_announce_ms = monotonic_ms() + (uint64_t)proc->announce_interval_ms;
   for (;;) {
     char ctrl_buf[64] = {0};
     size_t ctrl_len = 0;
@@ -316,24 +344,6 @@ static void *ctrl_thread_main(void *arg) {
       }
     } else {
       if (proc->stop) break;
-    }
-
-    if (proc->stop) break;
-    uint64_t now_ms = monotonic_ms();
-    if (now_ms != 0 && now_ms >= next_announce_ms) {
-      if (proc_register_ex(proc) == 0) {
-        if (!proc->announce_ok) {
-          printf("zcm_proc: broker reachable, re-registered %s\n", proc->name);
-          fflush(stdout);
-        }
-        proc->announce_ok = 1;
-      } else {
-        if (proc->announce_ok) {
-          fprintf(stderr, "zcm_proc: broker unreachable, waiting to re-register %s\n", proc->name);
-        }
-        proc->announce_ok = 0;
-      }
-      next_announce_ms = now_ms + (uint64_t)proc->announce_interval_ms;
     }
   }
   return NULL;
@@ -460,6 +470,16 @@ int zcm_proc_init(const char *name, zcm_socket_type_t data_type, int bind_data,
     free(proc);
     goto fail;
   }
+  if (pthread_create(&proc->announce_thread, NULL, announce_thread_main, proc) != 0) {
+    proc->stop = 1;
+    pthread_join(proc->ctrl_thread, NULL);
+    free(proc->name);
+    free(proc->reg_endpoint);
+    free(proc->ctrl_reg_endpoint);
+    free(proc->host);
+    free(proc);
+    goto fail;
+  }
 
   *out_proc = proc;
   if (out_data) *out_data = data;
@@ -480,6 +500,7 @@ fail:
 void zcm_proc_free(zcm_proc_t *proc) {
   if (!proc) return;
   proc->stop = 1;
+  pthread_join(proc->announce_thread, NULL);
   pthread_join(proc->ctrl_thread, NULL);
   zcm_node_unregister(proc->node, proc->name);
   if (proc->ctrl) zcm_socket_free(proc->ctrl);

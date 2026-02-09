@@ -152,6 +152,42 @@ int main(void) {
     goto done;
   }
 
+  char ctrl_ep[512] = {0};
+  char host[256] = {0};
+  int pid = 0;
+  if (zcm_node_info(node, "reannounce", NULL, 0, ctrl_ep, sizeof(ctrl_ep),
+                    host, sizeof(host), &pid) != 0 || ctrl_ep[0] == '\0') {
+    fprintf(stderr, "zcm_proc_reannounce: control endpoint missing after restart\n");
+    goto done;
+  }
+
+  zcm_socket_t *req = zcm_socket_new(ctx, ZCM_SOCK_REQ);
+  if (!req) goto done;
+  zcm_socket_set_timeouts(req, 1500);
+  if (zcm_socket_connect(req, ctrl_ep) != 0) {
+    fprintf(stderr, "zcm_proc_reannounce: connect control endpoint failed\n");
+    zcm_socket_free(req);
+    goto done;
+  }
+  if (zcm_socket_send_bytes(req, "PING", 4) != 0) {
+    fprintf(stderr, "zcm_proc_reannounce: send PING to control endpoint failed\n");
+    zcm_socket_free(req);
+    goto done;
+  }
+  char pong[32] = {0};
+  size_t n = 0;
+  if (zcm_socket_recv_bytes(req, pong, sizeof(pong) - 1, &n) != 0 || n == 0) {
+    fprintf(stderr, "zcm_proc_reannounce: no PONG from control endpoint\n");
+    zcm_socket_free(req);
+    goto done;
+  }
+  pong[n] = '\0';
+  zcm_socket_free(req);
+  if (strcmp(pong, "PONG") != 0) {
+    fprintf(stderr, "zcm_proc_reannounce: unexpected control reply: %s\n", pong);
+    goto done;
+  }
+
   printf("zcm_proc_reannounce: PASS\n");
   rc = 0;
 
