@@ -148,13 +148,20 @@ static int load_proc_config(const char *name,
                             int *ctrl_timeout_ms) {
   if (!name || !data_type || !bind_data || !ctrl_timeout_ms) return -1;
 
-  const char *cfg_dir = getenv("ZCM_PROC_CONFIG_DIR");
-  if (!cfg_dir || !*cfg_dir) cfg_dir = ".";
-
+  const char *cfg_file = getenv("ZCM_PROC_CONFIG_FILE");
   char cfg_path[1024];
-  if (snprintf(cfg_path, sizeof(cfg_path), "%s/%s.cfg", cfg_dir, name) >= (int)sizeof(cfg_path)) {
-    fprintf(stderr, "zcm_proc: config path too long for '%s'\n", name);
-    return -1;
+  if (cfg_file && *cfg_file) {
+    if (snprintf(cfg_path, sizeof(cfg_path), "%s", cfg_file) >= (int)sizeof(cfg_path)) {
+      fprintf(stderr, "zcm_proc: explicit config path too long\n");
+      return -1;
+    }
+  } else {
+    const char *cfg_dir = getenv("ZCM_PROC_CONFIG_DIR");
+    if (!cfg_dir || !*cfg_dir) cfg_dir = ".";
+    if (snprintf(cfg_path, sizeof(cfg_path), "%s/%s.cfg", cfg_dir, name) >= (int)sizeof(cfg_path)) {
+      fprintf(stderr, "zcm_proc: config path too long for '%s'\n", name);
+      return -1;
+    }
   }
   if (access(cfg_path, R_OK) != 0) {
     fprintf(stderr, "zcm_proc: config file not found: %s\n", cfg_path);

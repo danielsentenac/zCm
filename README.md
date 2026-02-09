@@ -96,16 +96,17 @@ List broker registry:
 ```bash
 ./build/tools/zcm broker list
 ```
-Unified process daemon:
+Unified process executable:
 ```bash
-./build/examples/zcm_proc daemon zcmproc
+./build/examples/zcm_proc <proc-config.cfg>
 ```
 
 Process config at init (required):
-- zcm_proc loads `NAME.cfg` as XML from:
-  - `$ZCM_PROC_CONFIG_DIR`, else current directory (`.`)
+- zcm_proc reads the XML file path passed on the command line.
 - XML is validated against:
   - `$ZCM_PROC_CONFIG_SCHEMA`, else `docs/config/proc-config.xsd`
+- `<process @name>` is the process registration name.
+- `<runtime @mode>` selects behavior (`daemon`, `pub-msg`, `sub-msg`, `pub-bytes`, `sub-bytes`, `req`).
 - Examples: `data/basic.cfg`, `docs/config/coco.cfg`, `docs/config/zcmproc.cfg`
 
 Broker resolution for `zcm` CLI and broker:
@@ -136,22 +137,23 @@ ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm broker list
 
 Default daemon request/reply (`PING` -> `PONG`):
 ```bash
-cp docs/config/zcmproc.cfg ./zcmproc.cfg
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc daemon zcmproc
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc docs/config/zcmproc.cfg
 ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm ping zcmproc
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc req zcmproc echoclient 1 PING
 ```
 
-Optional message pub/sub modes:
+Core typed send to a proc (`-t`, `-d`, `-f`, `-i`):
 ```bash
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc pub-msg procpub 5
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc sub-msg procpub procsub 5
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm send zcmproc -t "hello"
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm send zcmproc -i 42
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm send zcmproc -f 3.14
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm send zcmproc -d 2.718281828
 ```
 
-Optional bytes pub/sub modes:
+Other modes are configured in XML:
 ```bash
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc pub-bytes procbytes 5 raw-bytes-proc
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc sub-bytes procbytes procbytesub 5
+./build/examples/zcm_proc /path/to/procpub.cfg
+./build/examples/zcm_proc /path/to/procsub.cfg
+./build/examples/zcm_proc /path/to/echoclient.cfg
 ```
 
 ## Tests

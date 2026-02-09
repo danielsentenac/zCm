@@ -1,69 +1,91 @@
-# zcm-proc unified example
+# zcm-proc
 
-`zcm_proc` is a single example executable. By default it runs as an infinite
-daemon using direct ZeroMQ `REQ/REP` semantics for requests.
+`zcm_proc` is a single unified example process executable.
 
-Default request/response:
-- `PING` -> `PONG`
-
-The same executable can also be configured for optional message pub/sub and
-bytes pub/sub roles.
-
-## Init config (required)
-Each process must have an XML config file named `<name>.cfg`.
-
-Lookup rules:
-- directory: `$ZCM_PROC_CONFIG_DIR` (or `.` when unset)
-- schema: `$ZCM_PROC_CONFIG_SCHEMA` (or `docs/config/proc-config.xsd`)
-
-The config `<process @name>` must match the proc name exactly.
-
-Basic example file: `data/basic.cfg`
-
-## Naming convention
-Use plain process identifiers (no dotted suffixes).
-
-Examples:
-- `procpub`
-- `procsub`
-- `procbytes`
-- `procbytesub`
-- `zcmproc`
-- `echoclient`
-
-## Usage
+Launch format:
 ```bash
-./build/examples/zcm_proc daemon    [name]
-./build/examples/zcm_proc pub-msg   [name] [count|-1]
-./build/examples/zcm_proc sub-msg   [target] [self_name] [count|-1]
-./build/examples/zcm_proc pub-bytes [name] [count|-1] [payload]
-./build/examples/zcm_proc sub-bytes [target] [self_name] [count|-1]
-./build/examples/zcm_proc req       [service] [self_name] [count] [request]
-./build/examples/zcm_proc rep       [name]   # alias for daemon
+./build/examples/zcm_proc <proc-config.cfg>
 ```
 
-`count = -1` means infinite loop for modes that support it.
+`zcm_proc` reads runtime behavior from the XML config file. Command-line mode
+arguments are no longer used.
 
-## Common flows
-Daemon request/reply:
-```bash
-cp docs/config/zcmproc.cfg ./zcmproc.cfg
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc daemon zcmproc
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm ping zcmproc
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc req zcmproc echoclient 1 PING
+## Runtime model
+- Every process has one name: `<process name="...">`.
+- In `daemon` mode it is an infinite process using direct ZeroMQ `REQ/REP`
+  semantics.
+- Default control request/reply is `PING -> PONG`.
+- Optional roles (publish/subscribe bytes or messages, request client) are
+  selected by config.
+
+## Config file
+Validation:
+- config schema: `$ZCM_PROC_CONFIG_SCHEMA` or `docs/config/proc-config.xsd`
+
+Required nodes:
+- `<process @name>`
+- `<runtime @mode>`
+- `<dataSocket @type @bind>`
+
+Optional node:
+- `<control @timeoutMs>`
+
+Runtime attributes:
+- `mode`: `daemon`, `rep`, `pub-msg`, `sub-msg`, `pub-bytes`, `sub-bytes`, `req`
+- `target`: required for `sub-msg`, `sub-bytes`, `req`
+- `count`: optional (`-1` means infinite where supported)
+- `payload`: optional for `pub-bytes` (default `raw-bytes-proc`)
+- `request`: optional for `req` (default `PING`)
+
+## Examples
+Daemon (`PING -> PONG`):
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<procConfig>
+  <process name="coco">
+    <runtime mode="daemon"/>
+    <dataSocket type="REP" bind="true"/>
+    <control timeoutMs="200"/>
+  </process>
+</procConfig>
 ```
 
-Message pub/sub (optional):
+Run:
 ```bash
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc pub-msg procpub 5
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc sub-msg procpub procsub 5
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc docs/config/coco.cfg
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm ping coco
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm send coco -t "hello"
 ```
 
-`sub-msg` also understands the standardized core scalar property used by
-`./build/tools/zcm send NAME (-t|-d|-f|-i) VALUE`.
+Message publisher:
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<procConfig>
+  <process name="procpub">
+    <runtime mode="pub-msg" count="5"/>
+    <dataSocket type="PUB" bind="true"/>
+  </process>
+</procConfig>
+```
 
-Bytes pub/sub (optional):
-```bash
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc pub-bytes procbytes 5 raw-bytes-proc
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc sub-bytes procbytes procbytesub 5
+Bytes subscriber:
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<procConfig>
+  <process name="procbytesub">
+    <runtime mode="sub-bytes" target="procbytes" count="-1"/>
+    <dataSocket type="SUB" bind="false"/>
+  </process>
+</procConfig>
+```
+
+Request client:
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<procConfig>
+  <process name="echoclient">
+    <runtime mode="req" target="coco" count="1" request="PING"/>
+    <dataSocket type="REQ" bind="false"/>
+  </process>
+</procConfig>
 ```

@@ -1,12 +1,38 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
            elementFormDefault="qualified">
+  <xs:simpleType name="runtimeModeType">
+    <xs:restriction base="xs:string">
+      <xs:enumeration value="daemon"/>
+      <xs:enumeration value="rep"/>
+      <xs:enumeration value="pub-msg"/>
+      <xs:enumeration value="sub-msg"/>
+      <xs:enumeration value="pub-bytes"/>
+      <xs:enumeration value="sub-bytes"/>
+      <xs:enumeration value="req"/>
+    </xs:restriction>
+  </xs:simpleType>
+  <xs:simpleType name="countType">
+    <xs:restriction base="xs:integer">
+      <xs:minInclusive value="-1"/>
+      <xs:maxInclusive value="1000000"/>
+    </xs:restriction>
+  </xs:simpleType>
   <xs:element name="procConfig">
     <xs:complexType>
       <xs:sequence>
         <xs:element name="process">
           <xs:complexType>
             <xs:sequence>
+              <xs:element name="runtime">
+                <xs:complexType>
+                  <xs:attribute name="mode" type="runtimeModeType" use="required"/>
+                  <xs:attribute name="target" type="xs:string" use="optional"/>
+                  <xs:attribute name="count" type="countType" use="optional"/>
+                  <xs:attribute name="payload" type="xs:string" use="optional"/>
+                  <xs:attribute name="request" type="xs:string" use="optional"/>
+                </xs:complexType>
+              </xs:element>
               <xs:element name="dataSocket">
                 <xs:complexType>
                   <xs:attribute name="type" use="required">
