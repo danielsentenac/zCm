@@ -23,7 +23,7 @@ add_library(zcm_lib
 
 target_compile_definitions(zcm_lib
   PRIVATE
-    ZCM_PROC_CONFIG_SCHEMA_DEFAULT="${CMAKE_CURRENT_SOURCE_DIR}/docs/config/proc-config.xsd"
+    ZCM_PROC_CONFIG_SCHEMA_DEFAULT="${CMAKE_CURRENT_SOURCE_DIR}/config/schema/proc-config.xsd"
 )
 
 target_include_directories(zcm_lib
@@ -101,7 +101,7 @@ if(ZCM_BUILD_EXAMPLES)
   target_link_libraries(zcm_proc PRIVATE zcm_lib)
   target_compile_definitions(zcm_proc
     PRIVATE
-      ZCM_PROC_CONFIG_SCHEMA_DEFAULT="${CMAKE_CURRENT_SOURCE_DIR}/docs/config/proc-config.xsd"
+      ZCM_PROC_CONFIG_SCHEMA_DEFAULT="${CMAKE_CURRENT_SOURCE_DIR}/config/schema/proc-config.xsd"
   )
   set_target_properties(zcm_proc PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${ZCM_EXAMPLE_OUTPUT_DIR}

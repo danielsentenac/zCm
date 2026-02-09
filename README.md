@@ -104,7 +104,7 @@ Unified process executable:
 Process config at init (required):
 - zcm_proc reads the XML file path passed on the command line.
 - XML is validated against:
-  - `$ZCM_PROC_CONFIG_SCHEMA`, else `docs/config/proc-config.xsd`
+  - `$ZCM_PROC_CONFIG_SCHEMA`, else `config/schema/proc-config.xsd`
 - `<process @name>` is the process registration name.
 - `<runtime @mode>` selects behavior (`daemon`, `pub-msg`, `sub-msg`, `pub-bytes`, `sub-bytes`, `req`).
 - Examples: `data/basic.cfg`, `docs/config/coco.cfg`, `docs/config/zcmproc.cfg`

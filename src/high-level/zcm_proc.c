@@ -12,7 +12,7 @@
 #include <unistd.h>
 
 #ifndef ZCM_PROC_CONFIG_SCHEMA_DEFAULT
-#define ZCM_PROC_CONFIG_SCHEMA_DEFAULT "docs/config/proc-config.xsd"
+#define ZCM_PROC_CONFIG_SCHEMA_DEFAULT "config/schema/proc-config.xsd"
 #endif
 
 struct zcm_proc {

@@ -20,7 +20,7 @@ arguments are no longer used.
 
 ## Config file
 Validation:
-- config schema: `$ZCM_PROC_CONFIG_SCHEMA` or `docs/config/proc-config.xsd`
+- config schema: `$ZCM_PROC_CONFIG_SCHEMA` or `config/schema/proc-config.xsd`
 
 Required nodes:
 - `<process @name>`
