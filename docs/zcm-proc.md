@@ -47,7 +47,7 @@ Handlers:
 <procConfig>
   <process name="basic">
     <dataSocket type="PUB" port="7301" payload="basic-pub" intervalMs="1000"/>
-    <dataSocket type="SUB" targets="coco, sensorA, sensorB"/>
+    <dataSocket type="SUB" targets="publisher"/>
     <control timeoutMs="200"/>
     <handlers>
       <core pingRequest="PING" pingReply="PONG" defaultReply="OK"/>
@@ -68,3 +68,7 @@ ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc data/basic.
 ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm ping basic
 ./build/tools/zcm send basic -type QUERY -d 5 -d 7 -t action -d 0
 ```
+
+Additional generic config examples:
+- `data/publisher.cfg` (`publisher` with `PUB`)
+- `data/subscriber.cfg` (`subscriber` with `SUB` to `basic`)

@@ -118,7 +118,7 @@ Process config at init (required):
   - repeated `<type name=... reply=...><arg kind=.../>...</type>` with ordered payload args
   - malformed TYPE requests are rejected with `ERROR` and expected TYPE format
   - `zcm send` preserves the exact order of repeated `-t/-d/-f/-i` flags
-- Examples: `data/basic.cfg`, `docs/config/coco.cfg`, `docs/config/zcmproc.cfg`
+- Examples: `data/basic.cfg`, `data/publisher.cfg`, `data/subscriber.cfg`, `docs/config/zcmproc.cfg`
 
 Broker resolution for `zcm` CLI and broker:
 - `ZCMDOMAIN` selects the domain
@@ -163,6 +163,13 @@ ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm send zcmproc -d 2.7
 Ordered TYPE payload example:
 ```bash
 ./build/tools/zcm send basic -type QUERY -d 5 -d 7 -t action -d 0
+```
+
+Generic data-path sample procs:
+```bash
+./build/examples/zcm_proc data/publisher.cfg
+./build/examples/zcm_proc data/basic.cfg
+./build/examples/zcm_proc data/subscriber.cfg
 ```
 
 ## Tests
