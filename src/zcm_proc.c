@@ -92,6 +92,8 @@ static void *ctrl_thread_main(void *arg) {
         zcm_node_unregister(proc->node, proc->name);
         exit(0);
       } else if (strcmp(ctrl_buf, "PING") == 0) {
+        printf("PING received\n");
+        fflush(stdout);
         const char *pong = "PONG";
         zcm_socket_send_bytes(proc->ctrl, pong, strlen(pong));
       } else {
