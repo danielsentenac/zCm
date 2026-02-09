@@ -29,7 +29,7 @@ This document describes the intent and coverage of the current test suite.
 - Registers a name and then looks it up.
 - Verifies the resolved endpoint matches.
 
-**Files:** `tests/zcm_smoke.c`
+**Files:** `tests/core/zcm_smoke.c`
 
 ### `zcm_msg_roundtrip`
 **Purpose:** end-to-end serialize/deserialize coverage for typed messages.
@@ -37,25 +37,25 @@ This document describes the intent and coverage of the current test suite.
   - char, short, int, long, float, double, text, bytes, array
 - Serializes, parses back, and validates field values.
 
-**Files:** `tests/zcm_msg_roundtrip.c`
+**Files:** `tests/msg/zcm_msg_roundtrip.c`
 
 ### `zcm_msg_fuzz`
 **Purpose:** robustness under random input to the decoder.
 - Feeds random byte buffers into `zcm_msg_from_bytes`.
 - Ensures the decoder and validator do not crash.
 
-**Files:** `tests/zcm_msg_fuzz.c`
+**Files:** `tests/msg/zcm_msg_fuzz.c`
 
 ### `zcm_msg_vectors`
 **Purpose:** deterministic compatibility check for a small fixed message.
 - Creates a message with type `Test`, int `42`, text `ok`.
 - Serializes, parses back, validates fields.
 
-**Files:** `tests/zcm_msg_vectors.c`
+**Files:** `tests/msg/zcm_msg_vectors.c`
 
 ### `zcm_node_list`
 **Purpose:** registry listing API coverage.
 - Starts broker and registers two names.
 - Calls `zcm_node_list()` and asserts both are present.
 
-**Files:** `tests/zcm_node_list.c`
+**Files:** `tests/node/zcm_node_list.c`

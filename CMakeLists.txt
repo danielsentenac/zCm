@@ -48,35 +48,35 @@ set(ZCM_TOOL_OUTPUT_DIR ${CMAKE_BINARY_DIR}/tools)
 
 if(ZCM_BUILD_TESTS)
   enable_testing()
-  add_executable(zcm_smoke tests/zcm_smoke.c)
+  add_executable(zcm_smoke tests/core/zcm_smoke.c)
   target_link_libraries(zcm_smoke PRIVATE zcm_lib)
   add_test(NAME zcm_smoke COMMAND zcm_smoke)
   set_target_properties(zcm_smoke PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${ZCM_TEST_OUTPUT_DIR}
   )
 
-  add_executable(zcm_msg_roundtrip tests/zcm_msg_roundtrip.c)
+  add_executable(zcm_msg_roundtrip tests/msg/zcm_msg_roundtrip.c)
   target_link_libraries(zcm_msg_roundtrip PRIVATE zcm_lib)
   add_test(NAME zcm_msg_roundtrip COMMAND zcm_msg_roundtrip)
   set_target_properties(zcm_msg_roundtrip PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${ZCM_TEST_OUTPUT_DIR}
   )
 
-  add_executable(zcm_msg_fuzz tests/zcm_msg_fuzz.c)
+  add_executable(zcm_msg_fuzz tests/msg/zcm_msg_fuzz.c)
   target_link_libraries(zcm_msg_fuzz PRIVATE zcm_lib)
   add_test(NAME zcm_msg_fuzz COMMAND zcm_msg_fuzz)
   set_target_properties(zcm_msg_fuzz PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${ZCM_TEST_OUTPUT_DIR}
   )
 
-  add_executable(zcm_msg_vectors tests/zcm_msg_vectors.c)
+  add_executable(zcm_msg_vectors tests/msg/zcm_msg_vectors.c)
   target_link_libraries(zcm_msg_vectors PRIVATE zcm_lib)
   add_test(NAME zcm_msg_vectors COMMAND zcm_msg_vectors)
   set_target_properties(zcm_msg_vectors PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${ZCM_TEST_OUTPUT_DIR}
   )
 
-  add_executable(zcm_node_list tests/zcm_node_list.c)
+  add_executable(zcm_node_list tests/node/zcm_node_list.c)
   target_link_libraries(zcm_node_list PRIVATE zcm_lib)
   add_test(NAME zcm_node_list COMMAND zcm_node_list)
   set_target_properties(zcm_node_list PROPERTIES
@@ -85,37 +85,37 @@ if(ZCM_BUILD_TESTS)
 endif()
 
 if(ZCM_BUILD_EXAMPLES)
-  add_executable(zcm_broker_main examples/zcm_broker_main.c)
+  add_executable(zcm_broker_main examples/broker/zcm_broker_main.c)
   target_link_libraries(zcm_broker_main PRIVATE zcm_lib)
   set_target_properties(zcm_broker_main PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${ZCM_EXAMPLE_OUTPUT_DIR}
   )
 
-  add_executable(zcm_broker_ctl examples/zcm_broker_ctl.c)
+  add_executable(zcm_broker_ctl examples/broker/zcm_broker_ctl.c)
   target_link_libraries(zcm_broker_ctl PRIVATE zcm_lib)
   set_target_properties(zcm_broker_ctl PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${ZCM_EXAMPLE_OUTPUT_DIR}
   )
 
-  add_executable(zcm_list examples/zcm_list.c)
+  add_executable(zcm_list examples/node/zcm_list.c)
   target_link_libraries(zcm_list PRIVATE zcm_lib)
   set_target_properties(zcm_list PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${ZCM_EXAMPLE_OUTPUT_DIR}
   )
 
-  add_executable(zcm_proc examples/zcm_proc.c)
+  add_executable(zcm_proc examples/proc/zcm_proc.c)
   target_link_libraries(zcm_proc PRIVATE zcm_lib)
   set_target_properties(zcm_proc PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${ZCM_EXAMPLE_OUTPUT_DIR}
   )
 
-  add_executable(zcm_helloworld_handler examples/zcm_helloworld_handler.c)
+  add_executable(zcm_helloworld_handler examples/msg/zcm_helloworld_handler.c)
   target_link_libraries(zcm_helloworld_handler PRIVATE zcm_lib)
   set_target_properties(zcm_helloworld_handler PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${ZCM_EXAMPLE_OUTPUT_DIR}
   )
 
-  add_executable(zcm_send_helloworld examples/zcm_send_helloworld.c)
+  add_executable(zcm_send_helloworld examples/msg/zcm_send_helloworld.c)
   target_link_libraries(zcm_send_helloworld PRIVATE zcm_lib)
   set_target_properties(zcm_send_helloworld PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${ZCM_EXAMPLE_OUTPUT_DIR}
