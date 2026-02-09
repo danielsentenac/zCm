@@ -18,6 +18,8 @@ Lookup rules:
 
 The config `<process @name>` must match the proc name exactly.
 
+Basic example file: `data/basic.cfg`
+
 ## Naming convention
 Use plain process identifiers (no dotted suffixes).
 

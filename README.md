@@ -106,7 +106,7 @@ Process config at init (required):
   - `$ZCM_PROC_CONFIG_DIR`, else current directory (`.`)
 - XML is validated against:
   - `$ZCM_PROC_CONFIG_SCHEMA`, else `docs/config/proc-config.xsd`
-- Examples: `docs/config/coco.cfg`, `docs/config/zcmproc.cfg`
+- Examples: `data/basic.cfg`, `docs/config/coco.cfg`, `docs/config/zcmproc.cfg`
 
 Broker resolution for `zcm` CLI and broker:
 - `ZCMDOMAIN` selects the domain
