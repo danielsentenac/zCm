@@ -52,6 +52,7 @@ cmake --build build --target test-verbose
 Generate API documentation locally with Doxygen:
 ```bash
 doxygen Doxyfile
+./tools/doxygen/postprocess-awesome.sh docs/_build/html
 ```
 Generated HTML:
 ```bash
