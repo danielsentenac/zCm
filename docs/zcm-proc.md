@@ -1,69 +1,58 @@
 # zcm-proc
 
-`zcm_proc` is a single unified example process executable.
+`zcm_proc` is a single unified process daemon.
 
-Launch format:
+Launch:
 ```bash
 ./build/examples/zcm_proc <proc-config.cfg>
 ```
 
-`zcm_proc` reads runtime behavior from the XML config file. Command-line mode
-arguments are no longer used.
+## Behavior
+- Every `zcm_proc` is an infinite daemon.
+- It always answers requests over direct ZeroMQ `REQ/REP` semantics.
+- Default CORE behavior is `PING -> PONG`.
+- Optional `dataSocket` entries configure bytes `PUB/SUB` roles.
 
-## Runtime model
-- Every process has one name: `<process name="...">`.
-- In `daemon` mode it is an infinite process using direct ZeroMQ `REQ/REP`
-  semantics.
-- Default control request/reply is `PING -> PONG`.
-- Optional roles (publish/subscribe bytes or messages, request client) are
-  selected by config.
+## Config
+Validation schema:
+- `$ZCM_PROC_CONFIG_SCHEMA` or `config/schema/proc-config.xsd`
 
-## Config file
-Validation:
-- config schema: `$ZCM_PROC_CONFIG_SCHEMA` or `config/schema/proc-config.xsd`
-
-Required nodes:
+Required:
 - `<process @name>`
-- `<runtime @mode>`
-- `<dataSocket @type @bind>`
 
-Optional node:
+Optional:
+- repeated `<dataSocket .../>` for `PUB/SUB`
 - `<control @timeoutMs>`
-- `<handlers>` (daemon/rep modes)
+- `<handlers>`
 
-Runtime attributes:
-- `mode`: `daemon`, `rep`, `pub-msg`, `sub-msg`, `pub-bytes`, `sub-bytes`, `req`
-- `target`: required for `sub-msg`, `sub-bytes`, `req`
-- `count`: optional (`-1` means infinite where supported)
-- `payload`: optional for `pub-bytes` (default `raw-bytes-proc`)
-- `request`: optional for `req` (default `PING`)
+`dataSocket` attributes:
+- `type`: `PUB` or `SUB`
+- `port`: required TCP port
+- `target`: required for `SUB` (publisher proc name)
+- `payload`: optional `PUB` payload (default `raw-bytes-proc`)
+- `intervalMs`: optional `PUB` period (default `1000`)
 
 Handlers:
-- `<handlers><core .../></handlers>` configures CORE request handling.
-- `<handlers><type name="..." reply="..."><arg kind="..."/>...</type></handlers>` defines
-  a strict ordered payload format for that TYPE.
-- Supported arg kinds: `text`, `double`, `float`, `int`.
-- `zcm send` keeps value flag order exactly as written (`-t/-d/-f/-i` sequence).
-- Reply selection order in daemon/rep:
-  1. matching TYPE handler
-  2. CORE ping handler (`pingRequest -> pingReply`)
-  3. CORE default reply (`defaultReply`)
-- If a TYPE request payload does not match its declared arg sequence, the proc
-  replies with `ERROR` and includes the expected format (example:
-  `ERR malformed QUERY expected QUERY(double,double,text,double)`).
+- `<core pingRequest="..." pingReply="..." defaultReply="..."/>`
+- `<type name="..." reply="..."> <arg kind="..."/> ... </type>`
+- `arg kind`: `text`, `double`, `float`, `int`
+- TYPE payload order is strict.
+- Malformed TYPE payload reply: `ERROR` with expected format.
 
-## Examples
-Daemon (`PING -> PONG`):
+## Example
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <procConfig>
-  <process name="coco">
-    <runtime mode="daemon"/>
-    <dataSocket type="REP" bind="true"/>
+  <process name="basic">
+    <dataSocket type="PUB" port="7301" payload="basic-pub" intervalMs="1000"/>
+    <dataSocket type="SUB" port="7302" target="coco"/>
     <control timeoutMs="200"/>
     <handlers>
       <core pingRequest="PING" pingReply="PONG" defaultReply="OK"/>
-      <type name="ALARM" reply="ALARM_ACK">
+      <type name="QUERY" reply="OK">
+        <arg kind="double"/>
+        <arg kind="double"/>
+        <arg kind="text"/>
         <arg kind="double"/>
       </type>
     </handlers>
@@ -73,45 +62,7 @@ Daemon (`PING -> PONG`):
 
 Run:
 ```bash
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc docs/config/coco.cfg
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm ping coco
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm send coco -t "hello"
-```
-
-Ordered TYPE payload example:
-```bash
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc data/basic.cfg
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm ping basic
 ./build/tools/zcm send basic -type QUERY -d 5 -d 7 -t action -d 0
-```
-
-Message publisher:
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<procConfig>
-  <process name="procpub">
-    <runtime mode="pub-msg" count="5"/>
-    <dataSocket type="PUB" bind="true"/>
-  </process>
-</procConfig>
-```
-
-Bytes subscriber:
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<procConfig>
-  <process name="procbytesub">
-    <runtime mode="sub-bytes" target="procbytes" count="-1"/>
-    <dataSocket type="SUB" bind="false"/>
-  </process>
-</procConfig>
-```
-
-Request client:
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<procConfig>
-  <process name="echoclient">
-    <runtime mode="req" target="coco" count="1" request="PING"/>
-    <dataSocket type="REQ" bind="false"/>
-  </process>
-</procConfig>
 ```

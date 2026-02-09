@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <strings.h>
 #include <string.h>
+#include <pthread.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -19,6 +20,20 @@
 
 #define ZCM_TYPE_HANDLER_MAX 32
 #define ZCM_TYPE_HANDLER_ARG_MAX 32
+#define ZCM_DATA_SOCKET_MAX 16
+
+typedef enum data_socket_kind {
+  DATA_SOCKET_PUB = 1,
+  DATA_SOCKET_SUB = 2
+} data_socket_kind_t;
+
+typedef struct data_socket_cfg {
+  data_socket_kind_t kind;
+  int port;
+  char target[128];
+  char payload[256];
+  int interval_ms;
+} data_socket_cfg_t;
 
 typedef enum type_arg_kind {
   TYPE_ARG_TEXT = 1,
@@ -37,16 +52,13 @@ typedef struct type_handler_cfg {
 
 typedef struct runtime_cfg {
   char name[128];
-  char mode[32];
-  char target[128];
-  int count;
-  char payload[256];
-  char request[256];
   char core_ping_request[64];
   char core_ping_reply[64];
   char core_default_reply[64];
   type_handler_cfg_t type_handlers[ZCM_TYPE_HANDLER_MAX];
   size_t type_handler_count;
+  data_socket_cfg_t data_sockets[ZCM_DATA_SOCKET_MAX];
+  size_t data_socket_count;
 } runtime_cfg_t;
 
 static void trim_ws_inplace(char *text) {
@@ -254,6 +266,119 @@ static int load_type_handlers(const char *cfg_path, runtime_cfg_t *cfg) {
   return 0;
 }
 
+static int parse_port_str(const char *text, int *out) {
+  if (!text || !*text || !out) return -1;
+  char *end = NULL;
+  long v = strtol(text, &end, 10);
+  if (!end || *end != '\0') return -1;
+  if (v < 1 || v > 65535) return -1;
+  *out = (int)v;
+  return 0;
+}
+
+static int parse_interval_str(const char *text, int *out) {
+  if (!text || !*text || !out) return -1;
+  char *end = NULL;
+  long v = strtol(text, &end, 10);
+  if (!end || *end != '\0') return -1;
+  if (v < 1 || v > 600000) return -1;
+  *out = (int)v;
+  return 0;
+}
+
+static int parse_data_socket_kind(const char *text, data_socket_kind_t *out) {
+  if (!text || !*text || !out) return -1;
+  if (strcasecmp(text, "PUB") == 0) {
+    *out = DATA_SOCKET_PUB;
+    return 0;
+  }
+  if (strcasecmp(text, "SUB") == 0) {
+    *out = DATA_SOCKET_SUB;
+    return 0;
+  }
+  return -1;
+}
+
+static int load_data_sockets(const char *cfg_path, runtime_cfg_t *cfg) {
+  if (!cfg_path || !cfg) return -1;
+  cfg->data_socket_count = 0;
+
+  for (int i = 1; i <= ZCM_DATA_SOCKET_MAX; i++) {
+    char xpath[160];
+    char value[256] = {0};
+
+    if (snprintf(xpath, sizeof(xpath),
+                 "string(/procConfig/process/dataSocket[%d]/@type)", i) >= (int)sizeof(xpath)) {
+      return -1;
+    }
+    if (run_xmllint_xpath(cfg_path, xpath, value, sizeof(value)) != 0 || !value[0]) break;
+
+    size_t idx = cfg->data_socket_count;
+    data_socket_cfg_t *sock = &cfg->data_sockets[idx];
+    memset(sock, 0, sizeof(*sock));
+    sock->interval_ms = 1000;
+    snprintf(sock->payload, sizeof(sock->payload), "raw-bytes-proc");
+
+    if (parse_data_socket_kind(value, &sock->kind) != 0) {
+      fprintf(stderr, "zcm_proc: invalid dataSocket[%d]@type in %s\n", i, cfg_path);
+      return -1;
+    }
+
+    if (snprintf(xpath, sizeof(xpath),
+                 "string(/procConfig/process/dataSocket[%d]/@port)", i) >= (int)sizeof(xpath)) {
+      return -1;
+    }
+    value[0] = '\0';
+    if (run_xmllint_xpath(cfg_path, xpath, value, sizeof(value)) != 0 ||
+        parse_port_str(value, &sock->port) != 0) {
+      fprintf(stderr, "zcm_proc: invalid dataSocket[%d]@port in %s\n", i, cfg_path);
+      return -1;
+    }
+
+    if (snprintf(xpath, sizeof(xpath),
+                 "string(/procConfig/process/dataSocket[%d]/@target)", i) >= (int)sizeof(xpath)) {
+      return -1;
+    }
+    value[0] = '\0';
+    if (run_xmllint_xpath(cfg_path, xpath, value, sizeof(value)) == 0 && value[0]) {
+      snprintf(sock->target, sizeof(sock->target), "%s", value);
+    }
+
+    if (snprintf(xpath, sizeof(xpath),
+                 "string(/procConfig/process/dataSocket[%d]/@payload)", i) >= (int)sizeof(xpath)) {
+      return -1;
+    }
+    value[0] = '\0';
+    if (run_xmllint_xpath(cfg_path, xpath, value, sizeof(value)) == 0 && value[0]) {
+      snprintf(sock->payload, sizeof(sock->payload), "%s", value);
+    }
+
+    if (snprintf(xpath, sizeof(xpath),
+                 "string(/procConfig/process/dataSocket[%d]/@intervalMs)", i) >= (int)sizeof(xpath)) {
+      return -1;
+    }
+    value[0] = '\0';
+    if (run_xmllint_xpath(cfg_path, xpath, value, sizeof(value)) == 0 && value[0]) {
+      if (parse_interval_str(value, &sock->interval_ms) != 0) {
+        fprintf(stderr, "zcm_proc: invalid dataSocket[%d]@intervalMs in %s\n", i, cfg_path);
+        return -1;
+      }
+    }
+
+    if (sock->kind == DATA_SOCKET_SUB && !sock->target[0]) {
+      fprintf(stderr, "zcm_proc: dataSocket[%d] target required for SUB in %s\n", i, cfg_path);
+      return -1;
+    }
+    if (sock->kind == DATA_SOCKET_PUB && sock->target[0]) {
+      fprintf(stderr, "zcm_proc: dataSocket[%d] target not allowed for PUB in %s\n", i, cfg_path);
+      return -1;
+    }
+
+    cfg->data_socket_count++;
+  }
+  return 0;
+}
+
 static int load_runtime_config(const char *cfg_path, runtime_cfg_t *cfg) {
   if (!cfg_path || !cfg || !*cfg_path) return -1;
   if (access(cfg_path, R_OK) != 0) {
@@ -273,9 +398,6 @@ static int load_runtime_config(const char *cfg_path, runtime_cfg_t *cfg) {
   }
 
   memset(cfg, 0, sizeof(*cfg));
-  cfg->count = -1;
-  strncpy(cfg->payload, "raw-bytes-proc", sizeof(cfg->payload) - 1);
-  strncpy(cfg->request, "PING", sizeof(cfg->request) - 1);
   strncpy(cfg->core_ping_request, "PING", sizeof(cfg->core_ping_request) - 1);
   strncpy(cfg->core_ping_reply, "PONG", sizeof(cfg->core_ping_reply) - 1);
   strncpy(cfg->core_default_reply, "OK", sizeof(cfg->core_default_reply) - 1);
@@ -284,27 +406,6 @@ static int load_runtime_config(const char *cfg_path, runtime_cfg_t *cfg) {
     fprintf(stderr, "zcm_proc: missing process@name in %s\n", cfg_path);
     return -1;
   }
-
-  if (run_xmllint_xpath(cfg_path, "string(/procConfig/process/runtime/@mode)", cfg->mode, sizeof(cfg->mode)) != 0 || !cfg->mode[0]) {
-    fprintf(stderr, "zcm_proc: missing runtime@mode in %s\n", cfg_path);
-    return -1;
-  }
-
-  (void)run_xmllint_xpath(cfg_path, "string(/procConfig/process/runtime/@target)", cfg->target, sizeof(cfg->target));
-
-  char count_buf[64] = {0};
-  if (run_xmllint_xpath(cfg_path, "string(/procConfig/process/runtime/@count)", count_buf, sizeof(count_buf)) == 0 && count_buf[0]) {
-    if (parse_count_str(count_buf, &cfg->count) != 0) {
-      fprintf(stderr, "zcm_proc: invalid runtime@count in %s\n", cfg_path);
-      return -1;
-    }
-  }
-
-  (void)run_xmllint_xpath(cfg_path, "string(/procConfig/process/runtime/@payload)", cfg->payload, sizeof(cfg->payload));
-  if (!cfg->payload[0]) strncpy(cfg->payload, "raw-bytes-proc", sizeof(cfg->payload) - 1);
-
-  (void)run_xmllint_xpath(cfg_path, "string(/procConfig/process/runtime/@request)", cfg->request, sizeof(cfg->request));
-  if (!cfg->request[0]) strncpy(cfg->request, "PING", sizeof(cfg->request) - 1);
 
   char handler_value[128] = {0};
   if (run_xmllint_xpath(cfg_path, "string(/procConfig/process/handlers/core/@pingRequest)", handler_value, sizeof(handler_value)) == 0 && handler_value[0]) {
@@ -317,29 +418,8 @@ static int load_runtime_config(const char *cfg_path, runtime_cfg_t *cfg) {
     snprintf(cfg->core_default_reply, sizeof(cfg->core_default_reply), "%s", handler_value);
   }
   if (load_type_handlers(cfg_path, cfg) != 0) return -1;
-
-  if (strcmp(cfg->mode, "daemon") == 0 || strcmp(cfg->mode, "rep") == 0) return 0;
-  if (strcmp(cfg->mode, "pub-msg") == 0 || strcmp(cfg->mode, "pub-bytes") == 0) return 0;
-
-  if (strcmp(cfg->mode, "sub-msg") == 0 || strcmp(cfg->mode, "sub-bytes") == 0) {
-    if (!cfg->target[0]) {
-      fprintf(stderr, "zcm_proc: runtime@target required for mode %s\n", cfg->mode);
-      return -1;
-    }
-    return 0;
-  }
-
-  if (strcmp(cfg->mode, "req") == 0) {
-    if (!cfg->target[0]) {
-      fprintf(stderr, "zcm_proc: runtime@target required for mode req\n");
-      return -1;
-    }
-    if (cfg->count < 0) cfg->count = 1;
-    return 0;
-  }
-
-  fprintf(stderr, "zcm_proc: unsupported runtime mode: %s\n", cfg->mode);
-  return -1;
+  if (load_data_sockets(cfg_path, cfg) != 0) return -1;
+  return 0;
 }
 
 static int lookup_endpoint(zcm_proc_t *proc, const char *target, char *ep, size_t ep_size) {
@@ -430,6 +510,126 @@ static int decode_type_payload(zcm_msg_t *msg, const type_handler_cfg_t *handler
 
   if (zcm_msg_remaining(msg) != 0) return -1;
   return 0;
+}
+
+typedef struct data_socket_worker_ctx {
+  zcm_proc_t *proc;
+  char proc_name[128];
+  data_socket_cfg_t sock;
+} data_socket_worker_ctx_t;
+
+static int resolve_target_host(zcm_proc_t *proc, const char *target, char *host, size_t host_size) {
+  if (!proc || !target || !*target || !host || host_size == 0) return -1;
+  zcm_node_t *node = zcm_proc_node(proc);
+  if (!node) return -1;
+
+  char data_ep[512] = {0};
+  char ctrl_ep[512] = {0};
+  int pid = 0;
+  if (zcm_node_info(node, target, data_ep, sizeof(data_ep),
+                    ctrl_ep, sizeof(ctrl_ep), host, host_size, &pid) != 0) {
+    return -1;
+  }
+  return host[0] ? 0 : -1;
+}
+
+static void *pub_worker_main(void *arg) {
+  data_socket_worker_ctx_t *ctx = (data_socket_worker_ctx_t *)arg;
+  if (!ctx) return NULL;
+
+  zcm_socket_t *pub = zcm_socket_new(zcm_proc_context(ctx->proc), ZCM_SOCK_PUB);
+  if (!pub) {
+    free(ctx);
+    return NULL;
+  }
+
+  char ep[128];
+  snprintf(ep, sizeof(ep), "tcp://0.0.0.0:%d", ctx->sock.port);
+  if (zcm_socket_bind(pub, ep) != 0) {
+    fprintf(stderr, "zcm_proc: pub bind failed on %s\n", ep);
+    zcm_socket_free(pub);
+    free(ctx);
+    return NULL;
+  }
+
+  printf("data pub started: proc=%s port=%d payload=%s intervalMs=%d\n",
+         ctx->proc_name, ctx->sock.port, ctx->sock.payload, ctx->sock.interval_ms);
+
+  for (;;) {
+    if (zcm_socket_send_bytes(pub, ctx->sock.payload, strlen(ctx->sock.payload)) != 0) {
+      fprintf(stderr, "zcm_proc: pub send failed on port %d\n", ctx->sock.port);
+      usleep(200 * 1000);
+      continue;
+    }
+    usleep((useconds_t)ctx->sock.interval_ms * 1000);
+  }
+
+  zcm_socket_free(pub);
+  free(ctx);
+  return NULL;
+}
+
+static void *sub_worker_main(void *arg) {
+  data_socket_worker_ctx_t *ctx = (data_socket_worker_ctx_t *)arg;
+  if (!ctx) return NULL;
+
+  zcm_socket_t *sub = zcm_socket_new(zcm_proc_context(ctx->proc), ZCM_SOCK_SUB);
+  if (!sub) {
+    free(ctx);
+    return NULL;
+  }
+  zcm_socket_set_timeouts(sub, 1000);
+
+  char host[256] = {0};
+  char ep[256] = {0};
+  for (;;) {
+    if (resolve_target_host(ctx->proc, ctx->sock.target, host, sizeof(host)) != 0) {
+      usleep(300 * 1000);
+      continue;
+    }
+    snprintf(ep, sizeof(ep), "tcp://%s:%d", host, ctx->sock.port);
+    if (zcm_socket_connect(sub, ep) == 0 &&
+        zcm_socket_set_subscribe(sub, "", 0) == 0) {
+      break;
+    }
+    usleep(300 * 1000);
+  }
+
+  printf("data sub started: proc=%s target=%s endpoint=%s\n",
+         ctx->proc_name, ctx->sock.target, ep);
+
+  for (;;) {
+    char buf[512] = {0};
+    size_t n = 0;
+    if (zcm_socket_recv_bytes(sub, buf, sizeof(buf) - 1, &n) == 0) {
+      buf[n] = '\0';
+      printf("data sub received: from=%s payload=%s\n", ctx->sock.target, buf);
+    }
+  }
+
+  zcm_socket_free(sub);
+  free(ctx);
+  return NULL;
+}
+
+static void start_data_socket_workers(const runtime_cfg_t *cfg, zcm_proc_t *proc) {
+  if (!cfg || !proc) return;
+  for (size_t i = 0; i < cfg->data_socket_count; i++) {
+    data_socket_worker_ctx_t *ctx = (data_socket_worker_ctx_t *)calloc(1, sizeof(*ctx));
+    if (!ctx) continue;
+    ctx->proc = proc;
+    snprintf(ctx->proc_name, sizeof(ctx->proc_name), "%s", cfg->name);
+    ctx->sock = cfg->data_sockets[i];
+
+    pthread_t tid;
+    void *(*entry)(void *) = (ctx->sock.kind == DATA_SOCKET_PUB) ? pub_worker_main : sub_worker_main;
+    if (pthread_create(&tid, NULL, entry, ctx) != 0) {
+      fprintf(stderr, "zcm_proc: failed to start data socket worker\n");
+      free(ctx);
+      continue;
+    }
+    pthread_detach(tid);
+  }
 }
 
 static int run_pub_msg(const char *name, int count) {
@@ -598,6 +798,10 @@ static int run_daemon(const runtime_cfg_t *cfg) {
   if (cfg->type_handler_count > 0) {
     printf("type handlers loaded: %zu\n", cfg->type_handler_count);
   }
+  if (cfg->data_socket_count > 0) {
+    printf("data sockets configured: %zu\n", cfg->data_socket_count);
+  }
+  start_data_socket_workers(cfg, proc);
 
   for (;;) {
     zcm_msg_t *req = zcm_msg_new();
@@ -791,27 +995,5 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  if (strcmp(cfg.mode, "daemon") == 0 || strcmp(cfg.mode, "rep") == 0) {
-    return run_daemon(&cfg);
-  }
-  if (strcmp(cfg.mode, "pub-msg") == 0) {
-    return run_pub_msg(cfg.name, cfg.count);
-  }
-  if (strcmp(cfg.mode, "sub-msg") == 0) {
-    return run_sub_msg(cfg.target, cfg.name, cfg.count);
-  }
-  if (strcmp(cfg.mode, "pub-bytes") == 0) {
-    return run_pub_bytes(cfg.name, cfg.count, cfg.payload);
-  }
-  if (strcmp(cfg.mode, "sub-bytes") == 0) {
-    return run_sub_bytes(cfg.target, cfg.name, cfg.count);
-  }
-  if (strcmp(cfg.mode, "req") == 0) {
-    int count = cfg.count;
-    if (count < 1) count = 1;
-    return run_req(cfg.target, cfg.name, count, cfg.request);
-  }
-
-  fprintf(stderr, "zcm_proc: unsupported mode '%s'\n", cfg.mode);
-  return 1;
+  return run_daemon(&cfg);
 }

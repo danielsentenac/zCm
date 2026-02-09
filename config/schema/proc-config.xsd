@@ -1,23 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
            elementFormDefault="qualified">
-  <xs:simpleType name="runtimeModeType">
-    <xs:restriction base="xs:string">
-      <xs:enumeration value="daemon"/>
-      <xs:enumeration value="rep"/>
-      <xs:enumeration value="pub-msg"/>
-      <xs:enumeration value="sub-msg"/>
-      <xs:enumeration value="pub-bytes"/>
-      <xs:enumeration value="sub-bytes"/>
-      <xs:enumeration value="req"/>
-    </xs:restriction>
-  </xs:simpleType>
-  <xs:simpleType name="countType">
-    <xs:restriction base="xs:integer">
-      <xs:minInclusive value="-1"/>
-      <xs:maxInclusive value="1000000"/>
-    </xs:restriction>
-  </xs:simpleType>
   <xs:complexType name="coreHandlerType">
     <xs:attribute name="pingRequest" type="xs:string" use="optional"/>
     <xs:attribute name="pingReply" type="xs:string" use="optional"/>
@@ -49,40 +32,20 @@
         <xs:element name="process">
           <xs:complexType>
             <xs:sequence>
-              <xs:element name="runtime">
-                <xs:complexType>
-                  <xs:attribute name="mode" type="runtimeModeType" use="required"/>
-                  <xs:attribute name="target" type="xs:string" use="optional"/>
-                  <xs:attribute name="count" type="countType" use="optional"/>
-                  <xs:attribute name="payload" type="xs:string" use="optional"/>
-                  <xs:attribute name="request" type="xs:string" use="optional"/>
-                </xs:complexType>
-              </xs:element>
-              <xs:element name="dataSocket">
+              <xs:element name="dataSocket" minOccurs="0" maxOccurs="16">
                 <xs:complexType>
                   <xs:attribute name="type" use="required">
                     <xs:simpleType>
                       <xs:restriction base="xs:string">
-                        <xs:enumeration value="REQ"/>
-                        <xs:enumeration value="REP"/>
                         <xs:enumeration value="PUB"/>
                         <xs:enumeration value="SUB"/>
-                        <xs:enumeration value="PAIR"/>
-                        <xs:enumeration value="PUSH"/>
-                        <xs:enumeration value="PULL"/>
                       </xs:restriction>
                     </xs:simpleType>
                   </xs:attribute>
-                  <xs:attribute name="bind" use="required">
-                    <xs:simpleType>
-                      <xs:restriction base="xs:string">
-                        <xs:enumeration value="true"/>
-                        <xs:enumeration value="false"/>
-                        <xs:enumeration value="1"/>
-                        <xs:enumeration value="0"/>
-                      </xs:restriction>
-                    </xs:simpleType>
-                  </xs:attribute>
+                  <xs:attribute name="port" type="xs:positiveInteger" use="required"/>
+                  <xs:attribute name="target" type="xs:string" use="optional"/>
+                  <xs:attribute name="payload" type="xs:string" use="optional"/>
+                  <xs:attribute name="intervalMs" type="xs:positiveInteger" use="optional"/>
                 </xs:complexType>
               </xs:element>
               <xs:element name="control" minOccurs="0">

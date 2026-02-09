@@ -117,31 +117,6 @@ static int run_xmllint_xpath(const char *config_path, const char *xpath_expr,
   return 0;
 }
 
-static int parse_socket_type(const char *text, zcm_socket_type_t *out) {
-  if (!text || !*text || !out) return -1;
-  if (strcasecmp(text, "REQ") == 0) { *out = ZCM_SOCK_REQ; return 0; }
-  if (strcasecmp(text, "REP") == 0) { *out = ZCM_SOCK_REP; return 0; }
-  if (strcasecmp(text, "PUB") == 0) { *out = ZCM_SOCK_PUB; return 0; }
-  if (strcasecmp(text, "SUB") == 0) { *out = ZCM_SOCK_SUB; return 0; }
-  if (strcasecmp(text, "PAIR") == 0) { *out = ZCM_SOCK_PAIR; return 0; }
-  if (strcasecmp(text, "PUSH") == 0) { *out = ZCM_SOCK_PUSH; return 0; }
-  if (strcasecmp(text, "PULL") == 0) { *out = ZCM_SOCK_PULL; return 0; }
-  return -1;
-}
-
-static int parse_bool_text(const char *text, int *out) {
-  if (!text || !*text || !out) return -1;
-  if (strcasecmp(text, "true") == 0 || strcmp(text, "1") == 0) {
-    *out = 1;
-    return 0;
-  }
-  if (strcasecmp(text, "false") == 0 || strcmp(text, "0") == 0) {
-    *out = 0;
-    return 0;
-  }
-  return -1;
-}
-
 static int load_proc_config(const char *name,
                             zcm_socket_type_t *data_type,
                             int *bind_data,
@@ -190,17 +165,13 @@ static int load_proc_config(const char *name,
     return -1;
   }
 
-  if (run_xmllint_xpath(cfg_path, "string(/procConfig/process/dataSocket/@type)", value, sizeof(value)) != 0 ||
-      parse_socket_type(value, data_type) != 0) {
-    fprintf(stderr, "zcm_proc: invalid dataSocket@type in %s\n", cfg_path);
-    return -1;
-  }
-
-  if (run_xmllint_xpath(cfg_path, "string(/procConfig/process/dataSocket/@bind)", value, sizeof(value)) != 0 ||
-      parse_bool_text(value, bind_data) != 0) {
-    fprintf(stderr, "zcm_proc: invalid dataSocket@bind in %s\n", cfg_path);
-    return -1;
-  }
+  /*
+   * dataSocket entries are handled by the zcm_proc application for PUB/SUB
+   * configuration. zcm_proc_init keeps the caller-provided data_type/bind_data
+   * (typically REP/bind for daemon request handling).
+   */
+  (void)data_type;
+  (void)bind_data;
 
   if (run_xmllint_xpath(cfg_path, "string(/procConfig/process/control/@timeoutMs)", value, sizeof(value)) == 0 &&
       value[0] != '\0') {

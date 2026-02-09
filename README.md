@@ -107,8 +107,12 @@ Process config at init (required):
 - XML is validated against:
   - `$ZCM_PROC_CONFIG_SCHEMA`, else `config/schema/proc-config.xsd`
 - `<process @name>` is the process registration name.
-- `<runtime @mode>` selects behavior (`daemon`, `pub-msg`, `sub-msg`, `pub-bytes`, `sub-bytes`, `req`).
-- Optional `<handlers>` adds daemon reply rules:
+- `zcm_proc` is always an infinite daemon (no runtime mode).
+- Optional `<dataSocket>` configures bytes `PUB/SUB`:
+  - `type=PUB|SUB`
+  - `port=<tcp-port>`
+  - `target=<proc-name>` for `SUB`
+- Optional `<handlers>` adds request reply rules:
   - `<core pingRequest=... pingReply=... defaultReply=...>`
   - repeated `<type name=... reply=...><arg kind=.../>...</type>` with ordered payload args
   - malformed TYPE requests are rejected with `ERROR` and expected TYPE format
@@ -155,11 +159,9 @@ ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm send zcmproc -f 3.1
 ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm send zcmproc -d 2.718281828
 ```
 
-Other modes are configured in XML:
+Ordered TYPE payload example:
 ```bash
-./build/examples/zcm_proc /path/to/procpub.cfg
-./build/examples/zcm_proc /path/to/procsub.cfg
-./build/examples/zcm_proc /path/to/echoclient.cfg
+./build/tools/zcm send basic -type QUERY -d 5 -d 7 -t action -d 0
 ```
 
 ## Tests
