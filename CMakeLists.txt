@@ -14,11 +14,11 @@ option(ZCM_BUILD_EXAMPLES "Build zCm examples" ON)
 option(ZCM_BUILD_TOOLS "Build zCm tools" ON)
 
 add_library(zcm_lib
-  src/zcm_core.c
-  src/zcm_broker.c
-  src/zcm_node.c
-  src/zcm_proc.c
-  src/zcm_msg.c
+  src/low/zcm_core.c
+  src/low/zcm_broker.c
+  src/low/zcm_node.c
+  src/high/zcm_proc.c
+  src/low/zcm_msg.c
 )
 
 target_include_directories(zcm_lib
