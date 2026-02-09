@@ -15,7 +15,7 @@ option(ZCM_BUILD_TOOLS "Build zCm tools" ON)
 
 add_library(zcm_lib
   src/low-level/zcm_core.c
-  src/low-level/zcm_broker.c
+  src/high-level/zcm_broker.c
   src/low-level/zcm_node.c
   src/high-level/zcm_proc.c
   src/low-level/zcm_msg.c

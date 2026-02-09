@@ -38,8 +38,8 @@ Diagram (ASCII):
 - Direct peer-to-peer data transfer after broker lookup
 
 ## API Layers
-- High-level process lifecycle API: `zcm_proc` (`include/zcm/zcm_proc.h`, `src/high-level/`).
-- Low-level building blocks: broker/context, node registry, sockets, and message envelope (`include/zcm/zcm.h`, `include/zcm/zcm_node.h`, `include/zcm/zcm_msg.h`, `src/low-level/`).
+- High-level service/process lifecycle APIs: broker + proc (`include/zcm/zcm.h`, `include/zcm/zcm_proc.h`, `src/high-level/`).
+- Low-level building blocks: node registry, sockets, and message envelope (`include/zcm/zcm_node.h`, `include/zcm/zcm_msg.h`, `src/low-level/`).
 
 ## Build
 ```bash
