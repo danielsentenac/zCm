@@ -72,12 +72,12 @@ Ping a registered process (control REQ/REP):
 ```bash
 ./build/tools/zcm ping NAME
 ```
-Send a typed message (default command type: `ZCM_CMD`):
+Send a typed message (explicit type required):
 ```bash
-./build/tools/zcm send NAME -t "hello"
-./build/tools/zcm send NAME -i 42
-./build/tools/zcm send NAME -f 3.14
-./build/tools/zcm send NAME -d 2.718281828
+./build/tools/zcm send NAME -type ZCM_CMD -t "hello"
+./build/tools/zcm send NAME -type ZCM_CMD -i 42
+./build/tools/zcm send NAME -type ZCM_CMD -f 3.14
+./build/tools/zcm send NAME -type ZCM_CMD -d 2.718281828
 ./build/tools/zcm send NAME -type CustomType -t "hello"
 ./build/tools/zcm send basic -type QUERY -d 5 -d 7 -t action -d 0
 ```
@@ -156,10 +156,10 @@ ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm ping zcmproc
 
 Typed send to a proc (`-t`, `-d`, `-f`, `-i`):
 ```bash
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm send zcmproc -t "hello"
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm send zcmproc -i 42
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm send zcmproc -f 3.14
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm send zcmproc -d 2.718281828
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm send zcmproc -type ZCM_CMD -t "hello"
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm send zcmproc -type ZCM_CMD -i 42
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm send zcmproc -type ZCM_CMD -f 3.14
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm send zcmproc -type ZCM_CMD -d 2.718281828
 ```
 
 Ordered TYPE payload example:

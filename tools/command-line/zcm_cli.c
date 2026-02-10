@@ -15,7 +15,7 @@ static void usage(const char *prog) {
   fprintf(stderr,
           "usage:\n"
           "  %s names\n"
-          "  %s send NAME [-type TYPE] (-t TEXT | -d DOUBLE | -f FLOAT | -i INTEGER)+\n"
+          "  %s send NAME -type TYPE (-t TEXT | -d DOUBLE | -f FLOAT | -i INTEGER)+\n"
           "  %s kill NAME\n"
           "  %s ping NAME\n"
           "  %s broker [ping|stop|list]\n",
@@ -464,7 +464,7 @@ static int parse_send_args(int argc, char **argv,
                            size_t *value_count) {
   if (argc < 3) return -1;
   *name = argv[2];
-  *type = "ZCM_CMD";
+  *type = NULL;
   *value_count = 0;
 
   for (int i = 3; i < argc; i++) {
@@ -487,7 +487,7 @@ static int parse_send_args(int argc, char **argv,
     }
   }
 
-  return (*name && *value_count > 0) ? 0 : -1;
+  return (*name && *type && **type != '\0' && *value_count > 0) ? 0 : -1;
 }
 
 int main(int argc, char **argv) {
