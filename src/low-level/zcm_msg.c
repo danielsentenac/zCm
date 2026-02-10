@@ -16,12 +16,6 @@ struct zcm_msg {
   char last_error[128];
 };
 
-static const char *k_core_marker = "__zcm_core__";
-static const char *k_core_kind_text = "text";
-static const char *k_core_kind_double = "double";
-static const char *k_core_kind_float = "float";
-static const char *k_core_kind_int = "int";
-
 static void set_error(zcm_msg_t *msg, const char *text) {
   if (!msg || !text) return;
   strncpy(msg->last_error, text, sizeof(msg->last_error) - 1);
@@ -302,36 +296,6 @@ int zcm_msg_put_array(zcm_msg_t *msg, zcm_msg_array_type_t type,
   return ZCM_MSG_OK;
 }
 
-static int put_core_prefix(zcm_msg_t *msg, const char *kind) {
-  if (zcm_msg_put_text(msg, k_core_marker) != 0) return ZCM_MSG_ERR;
-  if (zcm_msg_put_text(msg, kind) != 0) return ZCM_MSG_ERR;
-  return ZCM_MSG_OK;
-}
-
-int zcm_msg_put_core_text(zcm_msg_t *msg, const char *value) {
-  if (!msg) return ZCM_MSG_ERR;
-  if (put_core_prefix(msg, k_core_kind_text) != 0) return ZCM_MSG_ERR;
-  return zcm_msg_put_text(msg, value);
-}
-
-int zcm_msg_put_core_double(zcm_msg_t *msg, double value) {
-  if (!msg) return ZCM_MSG_ERR;
-  if (put_core_prefix(msg, k_core_kind_double) != 0) return ZCM_MSG_ERR;
-  return zcm_msg_put_double(msg, value);
-}
-
-int zcm_msg_put_core_float(zcm_msg_t *msg, float value) {
-  if (!msg) return ZCM_MSG_ERR;
-  if (put_core_prefix(msg, k_core_kind_float) != 0) return ZCM_MSG_ERR;
-  return zcm_msg_put_float(msg, value);
-}
-
-int zcm_msg_put_core_int(zcm_msg_t *msg, int32_t value) {
-  if (!msg) return ZCM_MSG_ERR;
-  if (put_core_prefix(msg, k_core_kind_int) != 0) return ZCM_MSG_ERR;
-  return zcm_msg_put_int(msg, value);
-}
-
 static int expect_type(zcm_msg_t *msg, zcm_msg_item_type_t type) {
   uint8_t t = 0;
   if (get_u8(msg, &t) != 0) return ZCM_MSG_ERR_RANGE;
@@ -475,66 +439,6 @@ int zcm_msg_get_array(zcm_msg_t *msg, zcm_msg_array_type_t *type,
   *elements = elems;
   *data = p;
   return ZCM_MSG_OK;
-}
-
-static int text_eq(const char *ptr, uint32_t len, const char *lit) {
-  size_t n = strlen(lit);
-  if (len != n) return 0;
-  return memcmp(ptr, lit, n) == 0;
-}
-
-int zcm_msg_get_core(zcm_msg_t *msg, zcm_core_value_t *out) {
-  if (!msg || !out) return ZCM_MSG_ERR;
-
-  const char *marker = NULL;
-  uint32_t marker_len = 0;
-  if (zcm_msg_get_text(msg, &marker, &marker_len) != 0) return ZCM_MSG_ERR_TYPE;
-  if (!text_eq(marker, marker_len, k_core_marker)) {
-    set_error(msg, "core marker missing");
-    return ZCM_MSG_ERR_TYPE;
-  }
-
-  const char *kind = NULL;
-  uint32_t kind_len = 0;
-  if (zcm_msg_get_text(msg, &kind, &kind_len) != 0) return ZCM_MSG_ERR_TYPE;
-
-  memset(out, 0, sizeof(*out));
-  if (text_eq(kind, kind_len, k_core_kind_text)) {
-    const char *text = NULL;
-    uint32_t text_len = 0;
-    if (zcm_msg_get_text(msg, &text, &text_len) != 0) return ZCM_MSG_ERR_TYPE;
-    out->kind = ZCM_CORE_VALUE_TEXT;
-    out->text = text;
-    out->text_len = text_len;
-    return ZCM_MSG_OK;
-  }
-
-  if (text_eq(kind, kind_len, k_core_kind_double)) {
-    double v = 0.0;
-    if (zcm_msg_get_double(msg, &v) != 0) return ZCM_MSG_ERR_TYPE;
-    out->kind = ZCM_CORE_VALUE_DOUBLE;
-    out->d = v;
-    return ZCM_MSG_OK;
-  }
-
-  if (text_eq(kind, kind_len, k_core_kind_float)) {
-    float v = 0.0f;
-    if (zcm_msg_get_float(msg, &v) != 0) return ZCM_MSG_ERR_TYPE;
-    out->kind = ZCM_CORE_VALUE_FLOAT;
-    out->f = v;
-    return ZCM_MSG_OK;
-  }
-
-  if (text_eq(kind, kind_len, k_core_kind_int)) {
-    int32_t v = 0;
-    if (zcm_msg_get_int(msg, &v) != 0) return ZCM_MSG_ERR_TYPE;
-    out->kind = ZCM_CORE_VALUE_INT;
-    out->i = v;
-    return ZCM_MSG_OK;
-  }
-
-  set_error(msg, "unknown core kind");
-  return ZCM_MSG_ERR_TYPE;
 }
 
 const void *zcm_msg_data(const zcm_msg_t *msg, size_t *len) {
