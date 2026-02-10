@@ -45,6 +45,9 @@ typedef struct zcm_node_entry {
   char *endpoint;
 } zcm_node_entry_t;
 
+/** @brief zcm_node_register_ex() failure code when a name is already owned by another process. */
+#define ZCM_NODE_REGISTER_EX_DUPLICATE (-2)
+
 /**
  * @brief Create a node helper bound to one broker endpoint.
  *
@@ -89,7 +92,8 @@ int zcm_node_unregister(zcm_node_t *node, const char *name);
  * @param ctrl_endpoint Control endpoint used for management actions.
  * @param host Hostname or IP advertised by the process.
  * @param pid Process ID.
- * @return `0` on success, `-1` on failure.
+ * @return `0` on success, `ZCM_NODE_REGISTER_EX_DUPLICATE` on duplicate name,
+ *         `-1` on transport/internal failure.
  */
 int zcm_node_register_ex(zcm_node_t *node, const char *name, const char *endpoint,
                          const char *ctrl_endpoint, const char *host, int pid);

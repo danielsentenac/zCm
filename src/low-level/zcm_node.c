@@ -139,7 +139,10 @@ int zcm_node_register_ex(zcm_node_t *node, const char *name, const char *endpoin
   int n = zmq_recv(sock, reply, sizeof(reply) - 1, 0);
   zmq_close(sock);
   if (n <= 0) return -1;
-  return (strncmp(reply, "OK", 2) == 0) ? 0 : -1;
+  reply[n] = '\0';
+  if (strncmp(reply, "OK", 2) == 0) return 0;
+  if (strncmp(reply, "DUPLICATE", 9) == 0) return ZCM_NODE_REGISTER_EX_DUPLICATE;
+  return -1;
 }
 
 int zcm_node_info(zcm_node_t *node, const char *name,

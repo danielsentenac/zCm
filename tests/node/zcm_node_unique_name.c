@@ -45,10 +45,13 @@ int main(void) {
   }
 
   printf("zcm_node_unique_name: different owner with same name is rejected\n");
-  if (zcm_node_register_ex(node, "basic",
-                           "tcp://127.0.0.1:7302",
-                           "tcp://127.0.0.1:7402",
-                           "127.0.0.1", 2002) == 0) {
+  int dup_rc = zcm_node_register_ex(node, "basic",
+                                    "tcp://127.0.0.1:7302",
+                                    "tcp://127.0.0.1:7402",
+                                    "127.0.0.1", 2002);
+  if (dup_rc != ZCM_NODE_REGISTER_EX_DUPLICATE) {
+    fprintf(stderr, "expected duplicate rc=%d got %d\n",
+            ZCM_NODE_REGISTER_EX_DUPLICATE, dup_rc);
     zcm_node_free(node);
     zcm_broker_stop(broker);
     zcm_context_free(ctx);

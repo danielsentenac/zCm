@@ -439,8 +439,13 @@ int zcm_proc_init(const char *name, zcm_socket_type_t data_type, int bind_data,
   snprintf(ctrl_reg_ep, sizeof(ctrl_reg_ep), "tcp://%s:%d", use_host, ctrl_port);
 
   const char *reg_ep = (data_port > 0) ? data_reg_ep : ctrl_reg_ep;
-  if (zcm_node_register_ex(node, name, reg_ep, ctrl_reg_ep, use_host, getpid()) != 0) {
-    fprintf(stderr, "zcm_proc: register failed (broker not found or duplicate name)\n");
+  int reg_rc = zcm_node_register_ex(node, name, reg_ep, ctrl_reg_ep, use_host, getpid());
+  if (reg_rc != 0) {
+    if (reg_rc == ZCM_NODE_REGISTER_EX_DUPLICATE) {
+      fprintf(stderr, "zcm_proc: register failed (duplicate name: %s)\n", name);
+    } else {
+      fprintf(stderr, "zcm_proc: register failed (broker not reachable)\n");
+    }
     goto fail;
   }
 
