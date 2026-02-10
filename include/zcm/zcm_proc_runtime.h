@@ -145,8 +145,11 @@ int zcm_proc_runtime_first_pub_port(const zcm_proc_runtime_cfg_t *cfg, int *out_
 
 /**
  * @brief Start detached background workers for configured PUB/SUB data sockets.
+ *
+ * PUB data sockets allocate their TCP port automatically from the current
+ * domain range and write the chosen port back into `cfg->data_sockets`.
  */
-void zcm_proc_runtime_start_data_workers(const zcm_proc_runtime_cfg_t *cfg,
+void zcm_proc_runtime_start_data_workers(zcm_proc_runtime_cfg_t *cfg,
                                          zcm_proc_t *proc,
                                          zcm_proc_runtime_sub_payload_cb_t on_sub_payload,
                                          void *user);

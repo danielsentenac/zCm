@@ -260,6 +260,83 @@ static int parse_port_str(const char *text, int *out) {
   return 0;
 }
 
+static int load_domain_port_range(int *out_first_port, int *out_range_size) {
+  if (!out_first_port || !out_range_size) return -1;
+
+  const char *domain = getenv("ZCMDOMAIN");
+  if (!domain || !*domain) return -1;
+
+  const char *env = getenv("ZCMDOMAIN_DATABASE");
+  if (!env || !*env) env = getenv("ZCMMGR");
+
+  char file_name[512];
+  if (env && *env) {
+    snprintf(file_name, sizeof(file_name), "%s/ZCmDomains", env);
+  } else {
+    const char *root = getenv("ZCMROOT");
+    if (!root || !*root) return -1;
+    snprintf(file_name, sizeof(file_name), "%s/mgr/ZCmDomains", root);
+  }
+
+  FILE *f = fopen(file_name, "r");
+  if (!f) return -1;
+
+  char line[1024];
+  while (fgets(line, sizeof(line), f)) {
+    char *nl = strchr(line, '\n');
+    if (nl) *nl = '\0';
+    if (line[0] == '#' || line[0] == '\0') continue;
+
+    char *p = line;
+    while (p && (*p == ' ' || *p == '\t')) p++;
+    char *tok_domain = strsep(&p, " \t");
+    if (!tok_domain || strcmp(tok_domain, domain) != 0) continue;
+
+    while (p && (*p == ' ' || *p == '\t')) p++;
+    (void)strsep(&p, " \t"); /* nameserver host */
+    while (p && (*p == ' ' || *p == '\t')) p++;
+    (void)strsep(&p, " \t"); /* nameserver port */
+    while (p && (*p == ' ' || *p == '\t')) p++;
+    char *tok_first = strsep(&p, " \t");
+    while (p && (*p == ' ' || *p == '\t')) p++;
+    char *tok_range = strsep(&p, " \t");
+
+    int first_port = tok_first ? atoi(tok_first) : 0;
+    int range_size = tok_range ? atoi(tok_range) : 0;
+    fclose(f);
+
+    if (first_port <= 0) first_port = 7000;
+    if (range_size <= 0) range_size = 100;
+    *out_first_port = first_port;
+    *out_range_size = range_size;
+    return 0;
+  }
+
+  fclose(f);
+  return -1;
+}
+
+static int bind_pub_in_domain_range(zcm_socket_t *pub, int *out_port) {
+  if (!pub || !out_port) return -1;
+
+  int first_port = 7000;
+  int range_size = 100;
+  (void)load_domain_port_range(&first_port, &range_size);
+
+  for (int i = 0; i < range_size; i++) {
+    int port = first_port + i;
+    if (port <= 0 || port > 65535) continue;
+    char ep[128];
+    snprintf(ep, sizeof(ep), "tcp://0.0.0.0:%d", port);
+    if (zcm_socket_bind(pub, ep) == 0) {
+      *out_port = port;
+      return 0;
+    }
+  }
+
+  return -1;
+}
+
 static int parse_interval_str(const char *text, int *out) {
   if (!text || !*text || !out) return -1;
   char *end = NULL;
@@ -306,7 +383,6 @@ static int load_data_sockets(const char *cfg_path, zcm_proc_runtime_cfg_t *cfg) 
     }
 
     char xpath[256];
-    int port = 0;
     int interval_ms = 1000;
     zcm_proc_data_socket_kind_t kind;
     char target_single[128] = {0};
@@ -323,13 +399,7 @@ static int load_data_sockets(const char *cfg_path, zcm_proc_runtime_cfg_t *cfg) 
     if (kind == ZCM_PROC_DATA_SOCKET_PUB) {
       snprintf(xpath, sizeof(xpath), "string(/procConfig/process/dataSocket[%d]/@port)", i);
       if (run_xmllint_xpath(cfg_path, xpath, value, sizeof(value)) == 0 && value[0]) {
-        if (parse_port_str(value, &port) != 0) {
-          fprintf(stderr, "zcm_proc: dataSocket[%d] invalid @port='%s' in %s\n",
-                  i, value, cfg_path);
-          return -1;
-        }
-      } else {
-        fprintf(stderr, "zcm_proc: dataSocket[%d] PUB requires @port in %s\n",
+        fprintf(stderr, "zcm_proc: dataSocket[%d] PUB must not define @port in %s\n",
                 i, cfg_path);
         return -1;
       }
@@ -352,7 +422,7 @@ static int load_data_sockets(const char *cfg_path, zcm_proc_runtime_cfg_t *cfg) 
       zcm_proc_data_socket_cfg_t *sock = &cfg->data_sockets[cfg->data_socket_count++];
       memset(sock, 0, sizeof(*sock));
       sock->kind = ZCM_PROC_DATA_SOCKET_PUB;
-      sock->port = port;
+      sock->port = 0;
       sock->interval_ms = interval_ms;
       snprintf(sock->payload, sizeof(sock->payload), "%s", payload);
     } else {
@@ -571,6 +641,7 @@ typedef struct data_socket_worker_ctx {
   zcm_proc_t *proc;
   char proc_name[128];
   zcm_proc_data_socket_cfg_t sock;
+  zcm_socket_t *pub_socket;
   zcm_proc_runtime_sub_payload_cb_t on_sub_payload;
   void *user;
 } data_socket_worker_ctx_t;
@@ -669,17 +740,8 @@ static void *pub_worker_main(void *arg) {
   data_socket_worker_ctx_t *ctx = (data_socket_worker_ctx_t *)arg;
   if (!ctx) return NULL;
 
-  zcm_socket_t *pub = zcm_socket_new(zcm_proc_context(ctx->proc), ZCM_SOCK_PUB);
+  zcm_socket_t *pub = ctx->pub_socket;
   if (!pub) {
-    free(ctx);
-    return NULL;
-  }
-
-  char ep[128];
-  snprintf(ep, sizeof(ep), "tcp://0.0.0.0:%d", ctx->sock.port);
-  if (zcm_socket_bind(pub, ep) != 0) {
-    fprintf(stderr, "zcm_proc: pub bind failed on %s\n", ep);
-    zcm_socket_free(pub);
     free(ctx);
     return NULL;
   }
@@ -755,7 +817,7 @@ static void *sub_worker_main(void *arg) {
   return NULL;
 }
 
-void zcm_proc_runtime_start_data_workers(const zcm_proc_runtime_cfg_t *cfg,
+void zcm_proc_runtime_start_data_workers(zcm_proc_runtime_cfg_t *cfg,
                                          zcm_proc_t *proc,
                                          zcm_proc_runtime_sub_payload_cb_t on_sub_payload,
                                          void *user) {
@@ -766,14 +828,32 @@ void zcm_proc_runtime_start_data_workers(const zcm_proc_runtime_cfg_t *cfg,
     ctx->proc = proc;
     snprintf(ctx->proc_name, sizeof(ctx->proc_name), "%s", cfg->name);
     ctx->sock = cfg->data_sockets[i];
+    ctx->pub_socket = NULL;
     ctx->on_sub_payload = on_sub_payload;
     ctx->user = user;
+
+    if (ctx->sock.kind == ZCM_PROC_DATA_SOCKET_PUB) {
+      ctx->pub_socket = zcm_socket_new(zcm_proc_context(proc), ZCM_SOCK_PUB);
+      if (!ctx->pub_socket) {
+        fprintf(stderr, "zcm_proc: failed to create PUB socket worker\n");
+        free(ctx);
+        continue;
+      }
+      if (bind_pub_in_domain_range(ctx->pub_socket, &ctx->sock.port) != 0) {
+        fprintf(stderr, "zcm_proc: failed to allocate PUB dataSocket port\n");
+        zcm_socket_free(ctx->pub_socket);
+        free(ctx);
+        continue;
+      }
+      cfg->data_sockets[i].port = ctx->sock.port;
+    }
 
     pthread_t tid;
     void *(*entry)(void *) =
         (ctx->sock.kind == ZCM_PROC_DATA_SOCKET_PUB) ? pub_worker_main : sub_worker_main;
     if (pthread_create(&tid, NULL, entry, ctx) != 0) {
       fprintf(stderr, "zcm_proc: failed to start data socket worker\n");
+      if (ctx->pub_socket) zcm_socket_free(ctx->pub_socket);
       free(ctx);
       continue;
     }

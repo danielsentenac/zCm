@@ -29,7 +29,7 @@ Optional:
 
 `dataSocket` attributes:
 - `type`: `PUB` or `SUB`
-- `port`: required for `PUB`
+- `PUB` port is auto-allocated from the current domain range
 - `payload`: optional `PUB` payload (default `raw-bytes-proc`)
 - `intervalMs`: optional `PUB` period (default `1000`)
 - `targets`: comma-separated publisher names for `SUB` (multi-target)
@@ -48,7 +48,7 @@ Handlers:
 <?xml version="1.0" encoding="UTF-8"?>
 <procConfig>
   <process name="basic">
-    <dataSocket type="PUB" port="7301" payload="basic-pub" intervalMs="1000"/>
+    <dataSocket type="PUB" payload="basic-pub" intervalMs="1000"/>
     <dataSocket type="SUB" targets="publisher"/>
     <control timeoutMs="200"/>
     <handlers>

@@ -117,7 +117,7 @@ Process config at init (required):
   - interval can be tuned with `ZCM_PROC_REANNOUNCE_MS` (default `1000`)
 - Optional repeated `<dataSocket>` configures bytes `PUB/SUB`:
   - `type=PUB|SUB`
-  - `PUB` uses `port=<tcp-port>` and optional `payload`, `intervalMs`
+  - `PUB` auto-allocates a port from the current domain range and uses optional `payload`, `intervalMs`
   - `SUB` uses `targets=<proc-a,proc-b,...>` (or legacy `target=<proc-name>`)
   - each `SUB` target publisher port is discovered via default request `DATA_PORT`
 - Optional `<handlers>` adds request reply rules:
