@@ -413,9 +413,9 @@ int zcm_proc_runtime_load_config(const char *cfg_path, zcm_proc_runtime_cfg_t *c
   }
 
   memset(cfg, 0, sizeof(*cfg));
-  strncpy(cfg->core_ping_request, "PING", sizeof(cfg->core_ping_request) - 1);
-  strncpy(cfg->core_ping_reply, "PONG", sizeof(cfg->core_ping_reply) - 1);
-  strncpy(cfg->core_default_reply, "OK", sizeof(cfg->core_default_reply) - 1);
+  strncpy(cfg->ping_request, "PING", sizeof(cfg->ping_request) - 1);
+  strncpy(cfg->ping_reply, "PONG", sizeof(cfg->ping_reply) - 1);
+  strncpy(cfg->default_reply, "OK", sizeof(cfg->default_reply) - 1);
 
   if (run_xmllint_xpath(cfg_path, "string(/procConfig/process/@name)", cfg->name, sizeof(cfg->name)) != 0 ||
       !cfg->name[0]) {
@@ -424,17 +424,17 @@ int zcm_proc_runtime_load_config(const char *cfg_path, zcm_proc_runtime_cfg_t *c
   }
 
   char handler_value[128] = {0};
-  if (run_xmllint_xpath(cfg_path, "string(/procConfig/process/handlers/core/@pingRequest)",
+  if (run_xmllint_xpath(cfg_path, "string(/procConfig/process/handlers/ping/@pingRequest)",
                         handler_value, sizeof(handler_value)) == 0 && handler_value[0]) {
-    snprintf(cfg->core_ping_request, sizeof(cfg->core_ping_request), "%s", handler_value);
+    snprintf(cfg->ping_request, sizeof(cfg->ping_request), "%s", handler_value);
   }
-  if (run_xmllint_xpath(cfg_path, "string(/procConfig/process/handlers/core/@pingReply)",
+  if (run_xmllint_xpath(cfg_path, "string(/procConfig/process/handlers/ping/@pingReply)",
                         handler_value, sizeof(handler_value)) == 0 && handler_value[0]) {
-    snprintf(cfg->core_ping_reply, sizeof(cfg->core_ping_reply), "%s", handler_value);
+    snprintf(cfg->ping_reply, sizeof(cfg->ping_reply), "%s", handler_value);
   }
-  if (run_xmllint_xpath(cfg_path, "string(/procConfig/process/handlers/core/@defaultReply)",
+  if (run_xmllint_xpath(cfg_path, "string(/procConfig/process/handlers/ping/@defaultReply)",
                         handler_value, sizeof(handler_value)) == 0 && handler_value[0]) {
-    snprintf(cfg->core_default_reply, sizeof(cfg->core_default_reply), "%s", handler_value);
+    snprintf(cfg->default_reply, sizeof(cfg->default_reply), "%s", handler_value);
   }
   if (load_type_handlers(cfg_path, cfg) != 0) return -1;
   if (load_data_sockets(cfg_path, cfg) != 0) return -1;

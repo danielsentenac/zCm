@@ -41,7 +41,7 @@ Bytes item
 For command-line interoperability and generic process handling, zCm defines a
 standardized scalar value property encoded as three typed items in order:
 
-1. `TEXT` marker: `__zcm_core__`
+1. `TEXT` marker: `__zcm_value__`
 2. `TEXT` scalar kind: `text` | `double` | `float` | `int`
 3. Value item matching kind:
    - `TEXT` for `text`

@@ -3,7 +3,7 @@
 
 /**
  * @file zcm.h
- * @brief Core zCm context and broker lifecycle API.
+ * @brief Base zCm context and broker lifecycle API.
  */
 
 #ifdef __cplusplus

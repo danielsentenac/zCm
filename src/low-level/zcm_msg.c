@@ -16,7 +16,7 @@ struct zcm_msg {
   char last_error[128];
 };
 
-static const char *k_core_marker = "__zcm_core__";
+static const char *k_value_marker = "__zcm_value__";
 static const char *k_value_kind_text = "text";
 static const char *k_value_kind_double = "double";
 static const char *k_value_kind_float = "float";
@@ -303,7 +303,7 @@ int zcm_msg_put_array(zcm_msg_t *msg, zcm_msg_array_type_t type,
 }
 
 static int put_value_prefix(zcm_msg_t *msg, const char *kind) {
-  if (zcm_msg_put_text(msg, k_core_marker) != 0) return ZCM_MSG_ERR;
+  if (zcm_msg_put_text(msg, k_value_marker) != 0) return ZCM_MSG_ERR;
   if (zcm_msg_put_text(msg, kind) != 0) return ZCM_MSG_ERR;
   return ZCM_MSG_OK;
 }
@@ -489,7 +489,7 @@ int zcm_msg_get_value(zcm_msg_t *msg, zcm_msg_value_t *out) {
   const char *marker = NULL;
   uint32_t marker_len = 0;
   if (zcm_msg_get_text(msg, &marker, &marker_len) != 0) return ZCM_MSG_ERR_TYPE;
-  if (!text_eq(marker, marker_len, k_core_marker)) {
+  if (!text_eq(marker, marker_len, k_value_marker)) {
     set_error(msg, "value marker missing");
     return ZCM_MSG_ERR_TYPE;
   }

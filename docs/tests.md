@@ -30,7 +30,7 @@ This document describes the intent and coverage of the current test suite.
 - Registers a name and then looks it up.
 - Verifies the resolved endpoint matches.
 
-**Files:** `tests/core/zcm_smoke.c`
+**Files:** `tests/smoke/zcm_smoke.c`
 
 ### `zcm_msg_roundtrip`
 **Purpose:** end-to-end serialize/deserialize coverage for typed messages.

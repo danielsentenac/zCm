@@ -46,7 +46,7 @@ static int test_value_property(void) {
   zcm_msg_t *m = zcm_msg_new();
   if (!m) return 1;
 
-  zcm_msg_set_type(m, "CoreTest");
+  zcm_msg_set_type(m, "ValueTest");
   if (zcm_msg_put_value_int(m, 42) != 0) return 1;
 
   const void *data = NULL;

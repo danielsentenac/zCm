@@ -14,7 +14,7 @@ option(ZCM_BUILD_EXAMPLES "Build zCm examples" ON)
 option(ZCM_BUILD_TOOLS "Build zCm tools" ON)
 
 add_library(zcm_lib
-  src/low-level/zcm_core.c
+  src/low-level/zcm_context.c
   src/high-level/zcm_broker.c
   src/low-level/zcm_node.c
   src/high-level/zcm_proc.c
@@ -61,7 +61,7 @@ set_target_properties(zcm_lib PROPERTIES
 
 if(ZCM_BUILD_TESTS)
   enable_testing()
-  add_executable(zcm_smoke tests/core/zcm_smoke.c)
+  add_executable(zcm_smoke tests/smoke/zcm_smoke.c)
   target_link_libraries(zcm_smoke PRIVATE zcm_lib)
   add_test(NAME zcm_smoke COMMAND zcm_smoke)
   set_target_properties(zcm_smoke PROPERTIES

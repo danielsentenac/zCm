@@ -36,7 +36,7 @@ Optional:
 - `target`: optional single-target compatibility alias for `SUB`
 
 Handlers:
-- `<core pingRequest="..." pingReply="..." defaultReply="..."/>`
+- `<ping pingRequest="..." pingReply="..." defaultReply="..."/>`
 - `<type name="..." reply="..."> <arg kind="..."/> ... </type>`
 - `arg kind`: `text`, `double`, `float`, `int`
 - TYPE payload order is strict.
@@ -52,7 +52,7 @@ Handlers:
     <dataSocket type="SUB" targets="publisher"/>
     <control timeoutMs="200"/>
     <handlers>
-      <core pingRequest="PING" pingReply="PONG" defaultReply="OK"/>
+      <ping pingRequest="PING" pingReply="PONG" defaultReply="OK"/>
       <type name="QUERY" reply="OK">
         <arg kind="double"/>
         <arg kind="double"/>

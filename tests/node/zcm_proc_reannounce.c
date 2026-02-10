@@ -98,7 +98,7 @@ int main(void) {
           "  <process name=\"reannounce\">\n"
           "    <control timeoutMs=\"100\"/>\n"
           "    <handlers>\n"
-          "      <core pingRequest=\"PING\" pingReply=\"PONG\" defaultReply=\"OK\"/>\n"
+          "      <ping pingRequest=\"PING\" pingReply=\"PONG\" defaultReply=\"OK\"/>\n"
           "    </handlers>\n"
           "  </process>\n"
           "</procConfig>\n");

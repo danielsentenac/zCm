@@ -45,8 +45,8 @@ static int run_daemon(const char *cfg_path) {
   if (zcm_proc_runtime_bootstrap(cfg_path, &cfg, &proc, &rep) != 0) return 1;
 
   printf("zcm_proc daemon started: %s\n", cfg.name);
-  printf("core handler: %s -> %s (default=%s)\n",
-         cfg.core_ping_request, cfg.core_ping_reply, cfg.core_default_reply);
+  printf("ping handler: %s -> %s (default=%s)\n",
+         cfg.ping_request, cfg.ping_reply, cfg.default_reply);
   if (cfg.type_handler_count > 0) {
     printf("type handlers loaded: %zu\n", cfg.type_handler_count);
   }
@@ -76,7 +76,7 @@ static int run_daemon(const char *cfg_path) {
     char err_text[512] = {0};
     char dynamic_reply[64] = {0};
     char parsed_summary[512] = {0};
-    const char *reply_text = cfg.core_default_reply;
+    const char *reply_text = cfg.default_reply;
 
     if (!req_type) req_type = "";
 
@@ -157,10 +157,10 @@ static int run_daemon(const char *cfg_path) {
             snprintf(err_text, sizeof(err_text), "ERR no PUB dataSocket configured");
             reply_text = err_text;
           }
-        } else if (cmd && text_equals_nocase(cmd, cmd_len, cfg.core_ping_request)) {
-          reply_text = cfg.core_ping_reply;
+        } else if (cmd && text_equals_nocase(cmd, cmd_len, cfg.ping_request)) {
+          reply_text = cfg.ping_reply;
         } else {
-          reply_text = cfg.core_default_reply;
+          reply_text = cfg.default_reply;
         }
       }
     }

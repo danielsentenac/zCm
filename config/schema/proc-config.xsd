@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
            elementFormDefault="qualified">
-  <xs:complexType name="coreHandlerType">
+  <xs:complexType name="pingHandlerType">
     <xs:attribute name="pingRequest" type="xs:string" use="optional"/>
     <xs:attribute name="pingReply" type="xs:string" use="optional"/>
     <xs:attribute name="defaultReply" type="xs:string" use="optional"/>
@@ -57,7 +57,7 @@
               <xs:element name="handlers" minOccurs="0">
                 <xs:complexType>
                   <xs:sequence>
-                    <xs:element name="core" type="coreHandlerType" minOccurs="0" maxOccurs="1"/>
+                    <xs:element name="ping" type="pingHandlerType" minOccurs="0" maxOccurs="1"/>
                     <xs:element name="type" type="typeHandlerType" minOccurs="0" maxOccurs="32"/>
                   </xs:sequence>
                 </xs:complexType>
