@@ -170,25 +170,25 @@ static int parse_double_str(const char *text, double *out) {
   return 0;
 }
 
-static int set_payload_value(zcm_msg_t *msg, send_value_kind_t kind, const char *value, int core_mode) {
+static int set_payload_value(zcm_msg_t *msg, send_value_kind_t kind, const char *value) {
   if (!msg || !value) return -1;
   switch (kind) {
     case SEND_VALUE_TEXT:
-      return core_mode ? zcm_msg_put_core_text(msg, value) : zcm_msg_put_text(msg, value);
+      return zcm_msg_put_text(msg, value);
     case SEND_VALUE_DOUBLE: {
       double v = 0.0;
       if (parse_double_str(value, &v) != 0) return -1;
-      return core_mode ? zcm_msg_put_core_double(msg, v) : zcm_msg_put_double(msg, v);
+      return zcm_msg_put_double(msg, v);
     }
     case SEND_VALUE_FLOAT: {
       float v = 0.0f;
       if (parse_float_str(value, &v) != 0) return -1;
-      return core_mode ? zcm_msg_put_core_float(msg, v) : zcm_msg_put_float(msg, v);
+      return zcm_msg_put_float(msg, v);
     }
     case SEND_VALUE_INT: {
       int32_t v = 0;
       if (parse_int32_str(value, &v) != 0) return -1;
-      return core_mode ? zcm_msg_put_core_int(msg, v) : zcm_msg_put_int(msg, v);
+      return zcm_msg_put_int(msg, v);
     }
     default:
       return -1;
@@ -225,13 +225,8 @@ static int do_send(const char *endpoint, const char *name, const char *type,
   msg = zcm_msg_new();
   if (!msg) goto out;
   zcm_msg_set_type(msg, type);
-  int core_mode = (strcmp(type, "CORE") == 0);
-  if (core_mode && value_count != 1) {
-    fprintf(stderr, "zcm: CORE type expects exactly one value flag\n");
-    goto out;
-  }
   for (size_t i = 0; i < value_count; i++) {
-    if (set_payload_value(msg, values[i].kind, values[i].value, core_mode) != 0) {
+    if (set_payload_value(msg, values[i].kind, values[i].value) != 0) {
       fprintf(stderr, "zcm: invalid payload value at position %zu\n", i + 1);
       goto out;
     }
@@ -249,41 +244,45 @@ static int do_send(const char *endpoint, const char *name, const char *type,
     goto out;
   }
 
-  zcm_core_value_t core;
+  const char *text = NULL;
+  uint32_t text_len = 0;
+  int32_t code = 0;
   zcm_msg_rewind(reply);
-  if (zcm_msg_get_core(reply, &core) == 0) {
-    if (core.kind == ZCM_CORE_VALUE_TEXT) {
-      printf("[REQ -> %s] received reply: msgType=%s core.text=%.*s\n",
-             name, zcm_msg_get_type(reply), (int)core.text_len, core.text);
-    } else if (core.kind == ZCM_CORE_VALUE_DOUBLE) {
-      printf("[REQ -> %s] received reply: msgType=%s core.double=%f\n",
-             name, zcm_msg_get_type(reply), core.d);
-    } else if (core.kind == ZCM_CORE_VALUE_FLOAT) {
-      printf("[REQ -> %s] received reply: msgType=%s core.float=%f\n",
-             name, zcm_msg_get_type(reply), core.f);
-    } else if (core.kind == ZCM_CORE_VALUE_INT) {
-      printf("[REQ -> %s] received reply: msgType=%s core.int=%d\n",
-             name, zcm_msg_get_type(reply), core.i);
-    } else {
-      printf("[REQ -> %s] received reply: msgType=%s\n",
-             name, zcm_msg_get_type(reply));
-    }
+  if (zcm_msg_get_text(reply, &text, &text_len) == 0 &&
+      zcm_msg_get_int(reply, &code) == 0 &&
+      zcm_msg_remaining(reply) == 0) {
+    printf("[REQ -> %s] received reply: msgType=%s text=%.*s code=%d\n",
+           name, zcm_msg_get_type(reply), (int)text_len, text, code);
   } else {
-    const char *text = NULL;
-    uint32_t text_len = 0;
-    int32_t code = 0;
     zcm_msg_rewind(reply);
-    if (zcm_msg_get_text(reply, &text, &text_len) == 0) {
-      if (zcm_msg_get_int(reply, &code) == 0 && zcm_msg_remaining(reply) == 0) {
-        printf("[REQ -> %s] received reply: msgType=%s text=%.*s code=%d\n",
-               name, zcm_msg_get_type(reply), (int)text_len, text, code);
-      } else {
-        printf("[REQ -> %s] received reply: msgType=%s text=%.*s\n",
-               name, zcm_msg_get_type(reply), (int)text_len, text);
-      }
+    if (zcm_msg_get_text(reply, &text, &text_len) == 0 &&
+        zcm_msg_remaining(reply) == 0) {
+      printf("[REQ -> %s] received reply: msgType=%s text=%.*s\n",
+             name, zcm_msg_get_type(reply), (int)text_len, text);
     } else {
-      printf("[REQ -> %s] received reply: msgType=%s\n",
-             name, zcm_msg_get_type(reply));
+      double d = 0.0;
+      float f = 0.0f;
+      int32_t i = 0;
+      zcm_msg_rewind(reply);
+      if (zcm_msg_get_double(reply, &d) == 0 && zcm_msg_remaining(reply) == 0) {
+        printf("[REQ -> %s] received reply: msgType=%s double=%f\n",
+               name, zcm_msg_get_type(reply), d);
+      } else {
+        zcm_msg_rewind(reply);
+        if (zcm_msg_get_float(reply, &f) == 0 && zcm_msg_remaining(reply) == 0) {
+          printf("[REQ -> %s] received reply: msgType=%s float=%f\n",
+                 name, zcm_msg_get_type(reply), f);
+        } else {
+          zcm_msg_rewind(reply);
+          if (zcm_msg_get_int(reply, &i) == 0 && zcm_msg_remaining(reply) == 0) {
+            printf("[REQ -> %s] received reply: msgType=%s int=%d\n",
+                   name, zcm_msg_get_type(reply), i);
+          } else {
+            printf("[REQ -> %s] received reply: msgType=%s\n",
+                   name, zcm_msg_get_type(reply));
+          }
+        }
+      }
     }
   }
 
@@ -465,7 +464,7 @@ static int parse_send_args(int argc, char **argv,
                            size_t *value_count) {
   if (argc < 3) return -1;
   *name = argv[2];
-  *type = "CORE";
+  *type = "ZCM_CMD";
   *value_count = 0;
 
   for (int i = 3; i < argc; i++) {

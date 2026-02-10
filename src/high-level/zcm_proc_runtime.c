@@ -605,8 +605,9 @@ static int request_target_pub_port(zcm_proc_t *proc, const char *target, int *ou
     zcm_socket_free(req);
     return -1;
   }
-  zcm_msg_set_type(q, "CORE");
-  zcm_msg_put_core_text(q, "DATA_PORT");
+  zcm_msg_set_type(q, "ZCM_CMD");
+  zcm_msg_put_text(q, "DATA_PORT");
+  zcm_msg_put_int(q, 200);
   if (zcm_socket_send_msg(req, q) != 0) {
     zcm_msg_free(q);
     zcm_socket_free(req);
@@ -626,31 +627,22 @@ static int request_target_pub_port(zcm_proc_t *proc, const char *target, int *ou
   }
 
   int ok = -1;
-  zcm_core_value_t core;
+  const char *text = NULL;
+  uint32_t len = 0;
   zcm_msg_rewind(r);
-  if (zcm_msg_get_core(r, &core) == 0) {
-    if (core.kind == ZCM_CORE_VALUE_INT) {
-      if (core.i > 0 && core.i <= 65535) {
-        *out_port = core.i;
-        ok = 0;
-      }
-    } else if (core.kind == ZCM_CORE_VALUE_TEXT) {
-      char tmp[32] = {0};
-      int n = (core.text_len < sizeof(tmp) - 1) ? (int)core.text_len : (int)sizeof(tmp) - 1;
-      memcpy(tmp, core.text, (size_t)n);
-      tmp[n] = '\0';
-      if (parse_port_str(tmp, out_port) == 0) ok = 0;
-    }
+  if (zcm_msg_get_text(r, &text, &len) == 0) {
+    char tmp[32] = {0};
+    int n = (len < sizeof(tmp) - 1) ? (int)len : (int)sizeof(tmp) - 1;
+    memcpy(tmp, text, (size_t)n);
+    tmp[n] = '\0';
+    if (parse_port_str(tmp, out_port) == 0) ok = 0;
   } else {
-    const char *text = NULL;
-    uint32_t len = 0;
+    int32_t port_i = 0;
     zcm_msg_rewind(r);
-    if (zcm_msg_get_text(r, &text, &len) == 0) {
-      char tmp[32] = {0};
-      int n = (len < sizeof(tmp) - 1) ? (int)len : (int)sizeof(tmp) - 1;
-      memcpy(tmp, text, (size_t)n);
-      tmp[n] = '\0';
-      if (parse_port_str(tmp, out_port) == 0) ok = 0;
+    if (zcm_msg_get_int(r, &port_i) == 0 && zcm_msg_remaining(r) == 0 &&
+        port_i > 0 && port_i <= 65535) {
+      *out_port = port_i;
+      ok = 0;
     }
   }
 

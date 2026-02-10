@@ -77,7 +77,6 @@ static int run_daemon(const char *cfg_path) {
     char dynamic_reply[64] = {0};
     char parsed_summary[512] = {0};
     const char *reply_text = cfg.core_default_reply;
-    int reply_as_core = 0;
 
     if (!req_type) req_type = "";
 
@@ -99,41 +98,50 @@ static int run_daemon(const char *cfg_path) {
                cfg.name, req_type, parsed_summary[0] ? parsed_summary : "<no-args>");
       }
     } else {
-      zcm_core_value_t core;
       zcm_msg_rewind(req);
-      if (zcm_msg_get_core(req, &core) == 0 && zcm_msg_remaining(req) == 0) {
-        reply_as_core = 1;
-        if (core.kind == ZCM_CORE_VALUE_TEXT) {
-          cmd = core.text;
-          cmd_len = core.text_len;
-          printf("[REP %s] received request: msgType=%s core.text=%.*s\n",
-                 cfg.name, req_type, (int)cmd_len, cmd);
-        } else if (core.kind == ZCM_CORE_VALUE_DOUBLE) {
-          printf("[REP %s] received request: msgType=%s core.double=%f\n",
-                 cfg.name, req_type, core.d);
-        } else if (core.kind == ZCM_CORE_VALUE_FLOAT) {
-          printf("[REP %s] received request: msgType=%s core.float=%f\n",
-                 cfg.name, req_type, core.f);
-        } else if (core.kind == ZCM_CORE_VALUE_INT) {
-          printf("[REP %s] received request: msgType=%s core.int=%d\n",
-                 cfg.name, req_type, core.i);
-        }
+      if (zcm_msg_get_text(req, &cmd, &cmd_len) == 0 &&
+          zcm_msg_get_int(req, &req_code) == 0 &&
+          zcm_msg_remaining(req) == 0) {
+        printf("[REP %s] received request: msgType=%s cmd=%.*s code=%d\n",
+               cfg.name, req_type, (int)cmd_len, cmd, req_code);
       } else {
         zcm_msg_rewind(req);
         if (zcm_msg_get_text(req, &cmd, &cmd_len) == 0 &&
-            zcm_msg_get_int(req, &req_code) == 0 &&
             zcm_msg_remaining(req) == 0) {
           printf("[REP %s] received request: msgType=%s cmd=%.*s\n",
                  cfg.name, req_type, (int)cmd_len, cmd);
         } else {
-          malformed = 1;
-          req_code = 400;
-          snprintf(err_text, sizeof(err_text),
-                   "ERR malformed request for type %s", req_type[0] ? req_type : "<none>");
-          reply_text = err_text;
-          reply_as_core = 0;
-          printf("[REP %s] received malformed request: msgType=%s\n",
-                 cfg.name, req_type[0] ? req_type : "<none>");
+          double req_d = 0.0;
+          float req_f = 0.0f;
+          int32_t req_i = 0;
+          cmd = NULL;
+          cmd_len = 0;
+
+          zcm_msg_rewind(req);
+          if (zcm_msg_get_double(req, &req_d) == 0 && zcm_msg_remaining(req) == 0) {
+            printf("[REP %s] received request: msgType=%s double=%f\n",
+                   cfg.name, req_type, req_d);
+          } else {
+            zcm_msg_rewind(req);
+            if (zcm_msg_get_float(req, &req_f) == 0 && zcm_msg_remaining(req) == 0) {
+              printf("[REP %s] received request: msgType=%s float=%f\n",
+                     cfg.name, req_type, req_f);
+            } else {
+              zcm_msg_rewind(req);
+              if (zcm_msg_get_int(req, &req_i) == 0 && zcm_msg_remaining(req) == 0) {
+                printf("[REP %s] received request: msgType=%s int=%d\n",
+                       cfg.name, req_type, req_i);
+              } else {
+                malformed = 1;
+                req_code = 400;
+                snprintf(err_text, sizeof(err_text),
+                         "ERR malformed request for type %s", req_type[0] ? req_type : "<none>");
+                reply_text = err_text;
+                printf("[REP %s] received malformed request: msgType=%s\n",
+                       cfg.name, req_type[0] ? req_type : "<none>");
+              }
+            }
+          }
         }
       }
 
@@ -148,7 +156,6 @@ static int run_daemon(const char *cfg_path) {
             req_code = 404;
             snprintf(err_text, sizeof(err_text), "ERR no PUB dataSocket configured");
             reply_text = err_text;
-            reply_as_core = 0;
           }
         } else if (cmd && text_equals_nocase(cmd, cmd_len, cfg.core_ping_request)) {
           reply_text = cfg.core_ping_reply;
@@ -165,11 +172,7 @@ static int run_daemon(const char *cfg_path) {
       return 1;
     }
     zcm_msg_set_type(reply, malformed ? "ERROR" : "REPLY");
-    if (reply_as_core && !malformed) {
-      zcm_msg_put_core_text(reply, reply_text);
-    } else {
-      zcm_msg_put_text(reply, reply_text);
-    }
+    zcm_msg_put_text(reply, reply_text);
     zcm_msg_put_int(reply, req_code);
     if (zcm_socket_send_msg(rep, reply) != 0) {
       fprintf(stderr, "reply send failed\n");

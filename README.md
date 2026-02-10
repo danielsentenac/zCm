@@ -72,7 +72,7 @@ Ping a registered process (control REQ/REP):
 ```bash
 ./build/tools/zcm ping NAME
 ```
-Send a typed core message:
+Send a typed message (default command type: `ZCM_CMD`):
 ```bash
 ./build/tools/zcm send NAME -t "hello"
 ./build/tools/zcm send NAME -i 42
@@ -154,7 +154,7 @@ ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc docs/config
 ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm ping zcmproc
 ```
 
-Core typed send to a proc (`-t`, `-d`, `-f`, `-i`):
+Typed send to a proc (`-t`, `-d`, `-f`, `-i`):
 ```bash
 ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm send zcmproc -t "hello"
 ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm send zcmproc -i 42
