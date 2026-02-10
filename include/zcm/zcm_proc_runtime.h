@@ -11,6 +11,7 @@ extern "C" {
 #endif
 
 #include <stddef.h>
+#include <stdint.h>
 
 #include "zcm_proc.h"
 
@@ -112,6 +113,30 @@ int zcm_proc_runtime_decode_type_payload(zcm_msg_t *msg,
                                          const zcm_proc_type_handler_cfg_t *handler,
                                          char *summary,
                                          size_t summary_size);
+
+/**
+ * @brief Builtin command request literal used by zcm_proc command semantics.
+ */
+const char *zcm_proc_runtime_builtin_ping_request(void);
+
+/**
+ * @brief Builtin command reply literal for builtin ping requests.
+ */
+const char *zcm_proc_runtime_builtin_ping_reply(void);
+
+/**
+ * @brief Builtin default reply literal for unknown text commands.
+ */
+const char *zcm_proc_runtime_builtin_default_reply(void);
+
+/**
+ * @brief Resolve builtin text command reply (`PING` => `PONG`, else `OK`).
+ *
+ * @param cmd Command text bytes.
+ * @param cmd_len Command length in bytes.
+ * @return Static reply literal.
+ */
+const char *zcm_proc_runtime_builtin_reply_for_command(const char *cmd, uint32_t cmd_len);
 
 /**
  * @brief Return the first configured PUB data port.

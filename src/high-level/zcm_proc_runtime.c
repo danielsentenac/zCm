@@ -16,6 +16,17 @@
 #define ZCM_PROC_CONFIG_SCHEMA_DEFAULT "config/schema/proc-config.xsd"
 #endif
 
+static const char *k_builtin_ping_request = "PING";
+static const char *k_builtin_ping_reply = "PONG";
+static const char *k_builtin_default_reply = "OK";
+
+static int text_equals_nocase(const char *text, uint32_t len, const char *lit) {
+  if (!text || !lit) return 0;
+  size_t n = strlen(lit);
+  if (len != n) return 0;
+  return strncasecmp(text, lit, n) == 0;
+}
+
 static void trim_ws_inplace(char *text) {
   if (!text) return;
   char *start = text;
@@ -523,6 +534,25 @@ int zcm_proc_runtime_decode_type_payload(zcm_msg_t *msg,
 
   if (zcm_msg_remaining(msg) != 0) return -1;
   return 0;
+}
+
+const char *zcm_proc_runtime_builtin_ping_request(void) {
+  return k_builtin_ping_request;
+}
+
+const char *zcm_proc_runtime_builtin_ping_reply(void) {
+  return k_builtin_ping_reply;
+}
+
+const char *zcm_proc_runtime_builtin_default_reply(void) {
+  return k_builtin_default_reply;
+}
+
+const char *zcm_proc_runtime_builtin_reply_for_command(const char *cmd, uint32_t cmd_len) {
+  if (text_equals_nocase(cmd, cmd_len, k_builtin_ping_request)) {
+    return k_builtin_ping_reply;
+  }
+  return k_builtin_default_reply;
 }
 
 int zcm_proc_runtime_first_pub_port(const zcm_proc_runtime_cfg_t *cfg, int *out_port) {
