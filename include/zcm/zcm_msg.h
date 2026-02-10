@@ -54,6 +54,34 @@ typedef enum {
 } zcm_msg_status_t;
 
 /**
+ * @brief Canonical scalar kind used by the core message property.
+ */
+typedef enum {
+  ZCM_CORE_VALUE_TEXT = 1,
+  ZCM_CORE_VALUE_DOUBLE = 2,
+  ZCM_CORE_VALUE_FLOAT = 3,
+  ZCM_CORE_VALUE_INT = 4
+} zcm_core_value_kind_t;
+
+/**
+ * @brief Decoded core scalar property extracted from a message.
+ */
+typedef struct zcm_core_value {
+  /** @brief Value kind. */
+  zcm_core_value_kind_t kind;
+  /** @brief Text value pointer for `ZCM_CORE_VALUE_TEXT` (message-owned). */
+  const char *text;
+  /** @brief Text length in bytes for `text`. */
+  uint32_t text_len;
+  /** @brief Double value for `ZCM_CORE_VALUE_DOUBLE`. */
+  double d;
+  /** @brief Float value for `ZCM_CORE_VALUE_FLOAT`. */
+  float f;
+  /** @brief Integer value for `ZCM_CORE_VALUE_INT`. */
+  int32_t i;
+} zcm_core_value_t;
+
+/**
  * @brief Allocate a new empty message.
  *
  * @return New message handle, or `NULL` on allocation failure.
@@ -184,6 +212,42 @@ int zcm_msg_put_array(zcm_msg_t *msg, zcm_msg_array_type_t type,
                       uint32_t elements, const void *data);
 
 /**
+ * @brief Append the standardized core property with a text scalar.
+ *
+ * @param msg Message to append to.
+ * @param value Text value.
+ * @return `ZCM_MSG_OK` on success, otherwise an error code.
+ */
+int zcm_msg_put_core_text(zcm_msg_t *msg, const char *value);
+
+/**
+ * @brief Append the standardized core property with a double scalar.
+ *
+ * @param msg Message to append to.
+ * @param value Double value.
+ * @return `ZCM_MSG_OK` on success, otherwise an error code.
+ */
+int zcm_msg_put_core_double(zcm_msg_t *msg, double value);
+
+/**
+ * @brief Append the standardized core property with a float scalar.
+ *
+ * @param msg Message to append to.
+ * @param value Float value.
+ * @return `ZCM_MSG_OK` on success, otherwise an error code.
+ */
+int zcm_msg_put_core_float(zcm_msg_t *msg, float value);
+
+/**
+ * @brief Append the standardized core property with an int scalar.
+ *
+ * @param msg Message to append to.
+ * @param value Integer value.
+ * @return `ZCM_MSG_OK` on success, otherwise an error code.
+ */
+int zcm_msg_put_core_int(zcm_msg_t *msg, int32_t value);
+
+/**
  * @brief Read the next `char` item.
  *
  * @param msg Message to read from.
@@ -274,6 +338,17 @@ int zcm_msg_get_bytes(zcm_msg_t *msg, const void **data, uint32_t *len);
  */
 int zcm_msg_get_array(zcm_msg_t *msg, zcm_msg_array_type_t *type,
                       uint32_t *elements, const void **data);
+
+/**
+ * @brief Decode the standardized core property from the current read offset.
+ *
+ * The function consumes the marker/kind/value triplet from the message stream.
+ *
+ * @param msg Message to read from.
+ * @param out Output decoded value.
+ * @return `ZCM_MSG_OK` on success, otherwise an error code.
+ */
+int zcm_msg_get_core(zcm_msg_t *msg, zcm_core_value_t *out);
 
 /**
  * @brief Get raw payload bytes (without transport envelope).
