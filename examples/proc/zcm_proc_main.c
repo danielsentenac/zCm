@@ -14,13 +14,13 @@ static int text_equals_nocase(const char *text, uint32_t len, const char *lit) {
 }
 
 /*
- * User hook: customize this to process PUB bytes received by SUB sockets.
+ * User hook: customize this to process bytes received by SUB/PULL sockets.
  */
-static void app_on_sub_payload(const char *self_name,
-                               const char *source_name,
-                               const void *payload,
-                               size_t payload_len,
-                               void *user) {
+static void app_on_data_payload(const char *self_name,
+                                const char *source_name,
+                                const void *payload,
+                                size_t payload_len,
+                                void *user) {
   (void)self_name;
   (void)source_name;
   (void)payload;
@@ -45,14 +45,15 @@ static int run_daemon(const char *cfg_path) {
   if (zcm_proc_runtime_bootstrap(cfg_path, &cfg, &proc, &rep) != 0) return 1;
 
   printf("zcm_proc daemon started: %s\n", cfg.name);
-  printf("builtin command behavior enabled\n");
+  printf("builtin command behavior enabled (role=%s)\n",
+         zcm_proc_runtime_data_role(&cfg));
   if (cfg.type_handler_count > 0) {
     printf("type handlers loaded: %zu\n", cfg.type_handler_count);
   }
   if (cfg.data_socket_count > 0) {
     printf("data sockets configured: %zu\n", cfg.data_socket_count);
   }
-  zcm_proc_runtime_start_data_workers(&cfg, proc, app_on_sub_payload, NULL);
+  zcm_proc_runtime_start_data_workers(&cfg, proc, app_on_data_payload, NULL);
 
   for (;;) {
     zcm_msg_t *req = zcm_msg_new();
@@ -145,7 +146,32 @@ static int run_daemon(const char *cfg_path) {
       }
 
       if (!malformed) {
-        if (cmd && text_equals_nocase(cmd, cmd_len, "DATA_PORT")) {
+        if (cmd && text_equals_nocase(cmd, cmd_len, "DATA_ROLE")) {
+          reply_text = zcm_proc_runtime_data_role(&cfg);
+        } else if (cmd && text_equals_nocase(cmd, cmd_len, "DATA_PORT_PUB")) {
+          int pub_port = 0;
+          if (zcm_proc_runtime_first_pub_port(&cfg, &pub_port) == 0) {
+            snprintf(dynamic_reply, sizeof(dynamic_reply), "%d", pub_port);
+            reply_text = dynamic_reply;
+          } else {
+            malformed = 1;
+            req_code = 404;
+            snprintf(err_text, sizeof(err_text), "ERR no PUB dataSocket configured");
+            reply_text = err_text;
+          }
+        } else if (cmd && text_equals_nocase(cmd, cmd_len, "DATA_PORT_PUSH")) {
+          int push_port = 0;
+          if (zcm_proc_runtime_first_push_port(&cfg, &push_port) == 0) {
+            snprintf(dynamic_reply, sizeof(dynamic_reply), "%d", push_port);
+            reply_text = dynamic_reply;
+          } else {
+            malformed = 1;
+            req_code = 404;
+            snprintf(err_text, sizeof(err_text), "ERR no PUSH dataSocket configured");
+            reply_text = err_text;
+          }
+        } else if (cmd && text_equals_nocase(cmd, cmd_len, "DATA_PORT")) {
+          /* Backward-compatible alias for DATA_PORT_PUB. */
           int pub_port = 0;
           if (zcm_proc_runtime_first_pub_port(&cfg, &pub_port) == 0) {
             snprintf(dynamic_reply, sizeof(dynamic_reply), "%d", pub_port);

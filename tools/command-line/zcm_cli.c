@@ -82,6 +82,265 @@ static char *load_endpoint_from_config(void) {
   return NULL;
 }
 
+static int parse_port_reply(const char *text, int *out_port) {
+  if (!text || !out_port) return -1;
+  char *end = NULL;
+  long v = strtol(text, &end, 10);
+  if (!end || *end != '\0') return -1;
+  if (v < 1 || v > 65535) return -1;
+  *out_port = (int)v;
+  return 0;
+}
+
+static int query_proc_command_once(zcm_context_t *ctx, const char *endpoint,
+                                   const char *cmd, int include_code_field,
+                                   char *out_text, size_t out_text_size,
+                                   int *out_code) {
+  if (!ctx || !endpoint || !cmd || !out_text || out_text_size == 0) return -1;
+  out_text[0] = '\0';
+  if (out_code) *out_code = 0;
+
+  int rc = -1;
+  zcm_socket_t *req = zcm_socket_new(ctx, ZCM_SOCK_REQ);
+  if (!req) return -1;
+  zcm_socket_set_timeouts(req, 800);
+  if (zcm_socket_connect(req, endpoint) != 0) goto out;
+
+  zcm_msg_t *q = zcm_msg_new();
+  if (!q) goto out;
+  zcm_msg_set_type(q, "ZCM_CMD");
+  if (zcm_msg_put_text(q, cmd) != 0) {
+    zcm_msg_free(q);
+    goto out;
+  }
+  if (include_code_field && zcm_msg_put_int(q, 200) != 0) {
+    zcm_msg_free(q);
+    goto out;
+  }
+  if (zcm_socket_send_msg(req, q) != 0) {
+    zcm_msg_free(q);
+    goto out;
+  }
+  zcm_msg_free(q);
+
+  zcm_msg_t *reply = zcm_msg_new();
+  if (!reply) goto out;
+  if (zcm_socket_recv_msg(req, reply) != 0) {
+    zcm_msg_free(reply);
+    goto out;
+  }
+
+  const char *text = NULL;
+  uint32_t text_len = 0;
+  int32_t code = 200;
+
+  zcm_msg_rewind(reply);
+  if (zcm_msg_get_text(reply, &text, &text_len) == 0 &&
+      zcm_msg_get_int(reply, &code) == 0 &&
+      zcm_msg_remaining(reply) == 0) {
+    size_t n = text_len;
+    if (n >= out_text_size) n = out_text_size - 1;
+    memcpy(out_text, text, n);
+    out_text[n] = '\0';
+    if (out_code) *out_code = (int)code;
+    rc = 0;
+  } else {
+    zcm_msg_rewind(reply);
+    if (zcm_msg_get_text(reply, &text, &text_len) == 0 &&
+        zcm_msg_remaining(reply) == 0) {
+      size_t n = text_len;
+      if (n >= out_text_size) n = out_text_size - 1;
+      memcpy(out_text, text, n);
+      out_text[n] = '\0';
+      if (out_code) *out_code = 200;
+      rc = 0;
+    }
+  }
+
+  zcm_msg_free(reply);
+
+out:
+  zcm_socket_free(req);
+  return rc;
+}
+
+static int query_proc_command(zcm_context_t *ctx, const char *endpoint,
+                              const char *cmd, char *out_text,
+                              size_t out_text_size, int *out_code) {
+  if (query_proc_command_once(ctx, endpoint, cmd, 1, out_text, out_text_size, out_code) == 0) {
+    return 0;
+  }
+  return query_proc_command_once(ctx, endpoint, cmd, 0, out_text, out_text_size, out_code);
+}
+
+static int query_proc_command_with_ctrl_fallback(zcm_context_t *ctx, zcm_node_t *node,
+                                                 const char *name, const char *endpoint,
+                                                 const char *cmd, char *out_text,
+                                                 size_t out_text_size, int *out_code) {
+  if (!ctx || !node || !name || !endpoint || !cmd || !out_text || out_text_size == 0) return -1;
+  if (query_proc_command(ctx, endpoint, cmd, out_text, out_text_size, out_code) == 0) return 0;
+
+  char ctrl_ep[512] = {0};
+  if (zcm_node_info(node, name,
+                    NULL, 0,
+                    ctrl_ep, sizeof(ctrl_ep),
+                    NULL, 0,
+                    NULL) != 0) {
+    return -1;
+  }
+  if (!ctrl_ep[0] || strcmp(ctrl_ep, endpoint) == 0) return -1;
+  return query_proc_command(ctx, ctrl_ep, cmd, out_text, out_text_size, out_code);
+}
+
+static int role_contains_token(const char *role, const char *token) {
+  if (!role || !token || !*token) return 0;
+  size_t token_len = strlen(token);
+  const char *p = role;
+  while (p && *p) {
+    const char *next = strchr(p, '+');
+    size_t len = next ? (size_t)(next - p) : strlen(p);
+    if (len == token_len && strncmp(p, token, len) == 0) return 1;
+    if (!next) break;
+    p = next + 1;
+  }
+  return 0;
+}
+
+static int role_has_pub(const char *role) {
+  return role_contains_token(role, "PUB");
+}
+
+static int role_has_push(const char *role) {
+  return role_contains_token(role, "PUSH");
+}
+
+static void role_add_token(char *role, size_t role_size, const char *token) {
+  if (!role || role_size == 0 || !token || !*token) return;
+  if (strcmp(role, "UNKNOWN") == 0 || strcmp(role, "NONE") == 0 || role[0] == '\0') {
+    snprintf(role, role_size, "%s", token);
+    return;
+  }
+  if (role_contains_token(role, token)) return;
+
+  size_t cur = strlen(role);
+  size_t add = strlen(token) + 1; /* + token plus '+' */
+  if (cur + add >= role_size) return;
+  role[cur] = '+';
+  role[cur + 1] = '\0';
+  strncat(role, token, role_size - strlen(role) - 1);
+}
+
+static int role_is_valid(const char *role) {
+  if (!role) return 0;
+  if (strcmp(role, "NONE") == 0) return 1;
+
+  const char *p = role;
+  while (p && *p) {
+    const char *next = strchr(p, '+');
+    size_t len = next ? (size_t)(next - p) : strlen(p);
+    if (len == 0) return 0;
+
+    int ok = ((len == 3 && strncmp(p, "PUB", 3) == 0) ||
+              (len == 3 && strncmp(p, "SUB", 3) == 0) ||
+              (len == 4 && strncmp(p, "PUSH", 4) == 0) ||
+              (len == 4 && strncmp(p, "PULL", 4) == 0));
+    if (!ok) return 0;
+    if (!next) break;
+    p = next + 1;
+  }
+
+  return 1;
+}
+
+static int reply_means_no_pub(const char *text, int code) {
+  if (code != 404 || !text || !*text) return 0;
+  return (strstr(text, "no PUB") != NULL ||
+          strstr(text, "no pub") != NULL ||
+          strstr(text, "NO PUB") != NULL);
+}
+
+static int reply_means_no_push(const char *text, int code) {
+  if (code != 404 || !text || !*text) return 0;
+  return (strstr(text, "no PUSH") != NULL ||
+          strstr(text, "no push") != NULL ||
+          strstr(text, "NO PUSH") != NULL);
+}
+
+static void probe_node_role(zcm_context_t *ctx, zcm_node_t *node,
+                            const char *name, const char *endpoint,
+                            char *out_role, size_t out_role_size,
+                            int *out_pub_port, int *out_push_port) {
+  if (!ctx || !node || !name || !endpoint || !out_role || out_role_size == 0 ||
+      !out_pub_port || !out_push_port) {
+    return;
+  }
+
+  snprintf(out_role, out_role_size, "UNKNOWN");
+  *out_pub_port = -1;
+  *out_push_port = -1;
+
+  if (strcmp(name, "zcmbroker") == 0) {
+    snprintf(out_role, out_role_size, "BROKER");
+    return;
+  }
+
+  char text[128] = {0};
+  int code = 0;
+  if (query_proc_command_with_ctrl_fallback(ctx, node, name, endpoint,
+                                            "DATA_ROLE", text, sizeof(text), &code) == 0 &&
+      code == 200 && role_is_valid(text)) {
+    snprintf(out_role, out_role_size, "%s", text);
+  }
+
+  if (role_has_pub(out_role) || strcmp(out_role, "UNKNOWN") == 0) {
+    text[0] = '\0';
+    code = 0;
+    if (query_proc_command_with_ctrl_fallback(ctx, node, name, endpoint,
+                                              "DATA_PORT_PUB", text, sizeof(text), &code) != 0) {
+      (void)query_proc_command_with_ctrl_fallback(ctx, node, name, endpoint,
+                                                  "DATA_PORT", text, sizeof(text), &code);
+    }
+    if (text[0] != '\0' || code != 0) {
+      if (code == 200) {
+        int port = 0;
+        if (parse_port_reply(text, &port) == 0) {
+          *out_pub_port = port;
+          role_add_token(out_role, out_role_size, "PUB");
+        }
+      } else if (strcmp(out_role, "UNKNOWN") == 0 && reply_means_no_pub(text, code)) {
+        role_add_token(out_role, out_role_size, "SUB");
+      }
+    }
+  }
+
+  if (role_has_push(out_role) || strcmp(out_role, "UNKNOWN") == 0) {
+    text[0] = '\0';
+    code = 0;
+    if (query_proc_command_with_ctrl_fallback(ctx, node, name, endpoint,
+                                              "DATA_PORT_PUSH", text, sizeof(text), &code) == 0) {
+      if (code == 200) {
+        int port = 0;
+        if (parse_port_reply(text, &port) == 0) {
+          *out_push_port = port;
+          role_add_token(out_role, out_role_size, "PUSH");
+        }
+      } else if (strcmp(out_role, "UNKNOWN") == 0 && reply_means_no_push(text, code)) {
+        role_add_token(out_role, out_role_size, "PULL");
+      }
+    }
+  }
+}
+
+typedef struct names_row_info {
+  char role[32];
+  int pub_port;
+  int push_port;
+} names_row_info_t;
+
+static void print_repeat_char(char ch, size_t n) {
+  for (size_t i = 0; i < n; i++) putchar(ch);
+}
+
 static int do_names(const char *endpoint) {
   int rc = 1;
   zcm_context_t *ctx = zcm_context_new();
@@ -95,8 +354,83 @@ static int do_names(const char *endpoint) {
   zcm_node_entry_t *entries = NULL;
   size_t count = 0;
   if (zcm_node_list(node, &entries, &count) == 0) {
+    names_row_info_t *rows = NULL;
+    if (count > 0) {
+      rows = (names_row_info_t *)calloc(count, sizeof(*rows));
+      if (!rows) {
+        zcm_node_list_free(entries, count);
+        zcm_node_free(node);
+        zcm_context_free(ctx);
+        return 1;
+      }
+    }
+
+    size_t w_name = strlen("NAME");
+    size_t w_endpoint = strlen("ENDPOINT");
+    size_t w_role = strlen("ROLE");
+    size_t w_pub_port = strlen("PUB_PORT");
+    size_t w_push_port = strlen("PUSH_PORT");
+
     for (size_t i = 0; i < count; i++) {
-      printf("%s %s\n", entries[i].name, entries[i].endpoint);
+      probe_node_role(ctx, node, entries[i].name, entries[i].endpoint,
+                      rows[i].role, sizeof(rows[i].role),
+                      &rows[i].pub_port, &rows[i].push_port);
+
+      size_t name_len = strlen(entries[i].name);
+      if (name_len > w_name) w_name = name_len;
+      size_t ep_len = strlen(entries[i].endpoint);
+      if (ep_len > w_endpoint) w_endpoint = ep_len;
+      size_t role_len = strlen(rows[i].role);
+      if (role_len > w_role) w_role = role_len;
+
+      char port_text[16];
+      if (rows[i].pub_port > 0) snprintf(port_text, sizeof(port_text), "%d", rows[i].pub_port);
+      else snprintf(port_text, sizeof(port_text), "-");
+      size_t port_len = strlen(port_text);
+      if (port_len > w_pub_port) w_pub_port = port_len;
+
+      if (rows[i].push_port > 0) snprintf(port_text, sizeof(port_text), "%d", rows[i].push_port);
+      else snprintf(port_text, sizeof(port_text), "-");
+      port_len = strlen(port_text);
+      if (port_len > w_push_port) w_push_port = port_len;
+    }
+
+    printf("%-*s  %-*s  %-*s  %-*s  %-*s\n",
+           (int)w_name, "NAME",
+           (int)w_endpoint, "ENDPOINT",
+           (int)w_role, "ROLE",
+           (int)w_pub_port, "PUB_PORT",
+           (int)w_push_port, "PUSH_PORT");
+    print_repeat_char('-', w_name);
+    printf("  ");
+    print_repeat_char('-', w_endpoint);
+    printf("  ");
+    print_repeat_char('-', w_role);
+    printf("  ");
+    print_repeat_char('-', w_pub_port);
+    printf("  ");
+    print_repeat_char('-', w_push_port);
+    printf("\n");
+
+    for (size_t i = 0; i < count; i++) {
+      char pub_port_text[16];
+      char push_port_text[16];
+      if (rows[i].pub_port > 0) snprintf(pub_port_text, sizeof(pub_port_text), "%d", rows[i].pub_port);
+      else snprintf(pub_port_text, sizeof(pub_port_text), "-");
+      if (rows[i].push_port > 0) snprintf(push_port_text, sizeof(push_port_text), "%d", rows[i].push_port);
+      else snprintf(push_port_text, sizeof(push_port_text), "-");
+
+      printf("%-*s  %-*s  %-*s  %-*s  %-*s\n",
+             (int)w_name, entries[i].name,
+             (int)w_endpoint, entries[i].endpoint,
+             (int)w_role, rows[i].role,
+             (int)w_pub_port, pub_port_text,
+             (int)w_push_port, push_port_text);
+    }
+
+    if (rows) {
+      free(rows);
+      rows = NULL;
     }
     zcm_node_list_free(entries, count);
     rc = 0;

@@ -13,7 +13,7 @@ Launch:
 - Default command behavior is `PING -> PONG`.
 - It periodically re-registers in broker so names recover after broker restart.
   - tune interval with `ZCM_PROC_REANNOUNCE_MS` (default `1000`)
-- Optional repeated `dataSocket` entries configure bytes `PUB/SUB` roles.
+- Optional repeated `dataSocket` entries configure bytes `PUB/SUB/PUSH/PULL` roles.
 
 ## Config
 Validation schema:
@@ -23,17 +23,19 @@ Required:
 - `<process @name>`
 
 Optional:
-- repeated `<dataSocket .../>` for `PUB/SUB`
+- repeated `<dataSocket .../>` for `PUB/SUB/PUSH/PULL`
 - `<control @timeoutMs>`
 - `<handlers>`
 
 `dataSocket` attributes:
-- `type`: `PUB` or `SUB`
-- `PUB` port is auto-allocated from the current domain range
-- `payload`: optional `PUB` payload (default `raw-bytes-proc`)
-- `intervalMs`: optional `PUB` period (default `1000`)
-- `targets`: comma-separated publisher names for `SUB` (multi-target)
-- `target`: optional single-target compatibility alias for `SUB`
+- `type`: `PUB`, `SUB`, `PUSH`, or `PULL`
+- `PUB`/`PUSH` port is auto-allocated from the current domain range
+- `payload`: optional `PUB`/`PUSH` payload (default `tick`)
+- `intervalMs`: optional `PUB`/`PUSH` period (default `1000`)
+- `targets`: comma-separated source names for `SUB`/`PULL` (multi-target)
+- `target`: optional single-target compatibility alias for `SUB`/`PULL`
+- `topics`: optional `SUB`-only comma-separated topic prefixes
+  (example: `topics="prefix1,prefix2"`). If omitted, `SUB` subscribes to all.
 
 Handlers:
 - builtin command behavior is fixed: `PING -> PONG` (default reply `OK`)
@@ -41,7 +43,9 @@ Handlers:
 - `arg kind`: `text`, `double`, `float`, `int`
 - TYPE payload order is strict.
 - Malformed TYPE payload reply: `ERROR` with expected format.
-- each `SUB` target discovers publisher port by sending default request `DATA_PORT`.
+- each `SUB` target discovers publisher port with command `DATA_PORT_PUB`
+  (fallback alias: `DATA_PORT`).
+- each `PULL` target discovers pusher port with command `DATA_PORT_PUSH`.
 
 ## Example
 ```xml
@@ -49,7 +53,7 @@ Handlers:
 <procConfig>
   <process name="basic">
     <dataSocket type="PUB" payload="basic-pub" intervalMs="1000"/>
-    <dataSocket type="SUB" targets="publisher"/>
+    <dataSocket type="SUB" targets="publisher" topics="publisher"/>
     <control timeoutMs="200"/>
     <handlers>
       <type name="QUERY" reply="OK">
@@ -70,6 +74,17 @@ ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm ping basic
 ./build/tools/zcm send basic -type QUERY -d 5 -d 7 -t action -d 0
 ```
 
+PUSH/PULL quick run:
+```bash
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc data/pusher.cfg
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc data/puller.cfg
+```
+Expected logs:
+- `pusher`: `[PUSH pusher] started: ...`
+- `puller`: `[PULL puller] connected ...` then `[PULL puller] received payload ...`
+
 Additional generic config examples:
 - `data/publisher.cfg` (`publisher` with `PUB`)
 - `data/subscriber.cfg` (`subscriber` with `SUB` to `basic`)
+- `data/pusher.cfg` (`pusher` with `PUSH`)
+- `data/puller.cfg` (`puller` with `PULL` to `pusher`)

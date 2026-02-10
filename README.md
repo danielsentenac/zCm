@@ -64,6 +64,7 @@ List registered processes:
 ```bash
 ./build/tools/zcm names
 ```
+Output columns include `ROLE`, `PUB_PORT`, and `PUSH_PORT`.
 Kill (shutdown) a registered process:
 ```bash
 ./build/tools/zcm kill NAME
@@ -115,11 +116,13 @@ Process config at init (required):
 - `zcm_proc` is always an infinite daemon (no runtime mode).
 - `zcm_proc` re-announces its registration periodically so names are restored if broker restarts.
   - interval can be tuned with `ZCM_PROC_REANNOUNCE_MS` (default `1000`)
-- Optional repeated `<dataSocket>` configures bytes `PUB/SUB`:
-  - `type=PUB|SUB`
-  - `PUB` auto-allocates a port from the current domain range and uses optional `payload`, `intervalMs`
-  - `SUB` uses `targets=<proc-a,proc-b,...>` (or legacy `target=<proc-name>`)
-  - each `SUB` target publisher port is discovered via default request `DATA_PORT`
+- Optional repeated `<dataSocket>` configures bytes `PUB/SUB/PUSH/PULL`:
+  - `type=PUB|SUB|PUSH|PULL`
+  - `PUB`/`PUSH` auto-allocate a port from the current domain range and use optional `payload`, `intervalMs`
+  - `SUB`/`PULL` use `targets=<proc-a,proc-b,...>` (or legacy `target=<proc-name>`)
+  - `SUB` can define `topics=<prefix1,prefix2,...>` for topic-prefix filtering (default is all topics)
+  - each `SUB` target publisher port is discovered via `DATA_PORT_PUB` (fallback: `DATA_PORT`)
+  - each `PULL` target pusher port is discovered via `DATA_PORT_PUSH`
 - Optional `<handlers>` adds request reply rules:
   - builtin command behavior is fixed: `PING -> PONG` (default reply `OK`)
   - repeated `<type name=... reply=...><arg kind=.../>...</type>` with ordered payload args
@@ -127,7 +130,7 @@ Process config at init (required):
   - `zcm send` preserves the exact order of repeated payload flags
   - payload flags: `-t/-d/-f/-i/-c/-s/-l/-b/-a`
   - `-a` uses `kind:v1,v2,...` with `kind=char|short|int|float|double`
-- Examples: `data/basic.cfg`, `data/publisher.cfg`, `data/subscriber.cfg`, `docs/config/zcmproc.cfg`
+- Examples: `data/basic.cfg`, `data/publisher.cfg`, `data/subscriber.cfg`, `data/pusher.cfg`, `data/puller.cfg`, `docs/config/zcmproc.cfg`
 
 Broker resolution for `zcm` CLI and broker:
 - `ZCMDOMAIN` selects the domain
@@ -181,6 +184,8 @@ Generic data-path sample procs:
 ./build/examples/zcm_proc data/publisher.cfg
 ./build/examples/zcm_proc data/basic.cfg
 ./build/examples/zcm_proc data/subscriber.cfg
+./build/examples/zcm_proc data/pusher.cfg
+./build/examples/zcm_proc data/puller.cfg
 ```
 
 ## Tests

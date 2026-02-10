@@ -18,16 +18,21 @@ extern "C" {
 #define ZCM_PROC_TYPE_HANDLER_MAX 32
 #define ZCM_PROC_TYPE_HANDLER_ARG_MAX 32
 #define ZCM_PROC_DATA_SOCKET_MAX 16
+#define ZCM_PROC_SUB_TOPIC_MAX 16
 
 typedef enum zcm_proc_data_socket_kind {
   ZCM_PROC_DATA_SOCKET_PUB = 1,
-  ZCM_PROC_DATA_SOCKET_SUB = 2
+  ZCM_PROC_DATA_SOCKET_SUB = 2,
+  ZCM_PROC_DATA_SOCKET_PUSH = 3,
+  ZCM_PROC_DATA_SOCKET_PULL = 4
 } zcm_proc_data_socket_kind_t;
 
 typedef struct zcm_proc_data_socket_cfg {
   zcm_proc_data_socket_kind_t kind;
   int port;
   char target[128];
+  char topics[ZCM_PROC_SUB_TOPIC_MAX][128];
+  size_t topic_count;
   char payload[256];
   int interval_ms;
 } zcm_proc_data_socket_cfg_t;
@@ -56,10 +61,10 @@ typedef struct zcm_proc_runtime_cfg {
 } zcm_proc_runtime_cfg_t;
 
 /**
- * @brief Optional callback for bytes received by SUB data workers.
+ * @brief Optional callback for bytes received by SUB/PULL data workers.
  *
  * @param self_name Name of the current process.
- * @param source_name Publisher process name from config target.
+ * @param source_name Source process name from config target.
  * @param payload Received payload bytes.
  * @param payload_len Number of bytes in `payload`.
  * @param user Opaque user pointer passed to worker startup.
@@ -115,6 +120,14 @@ int zcm_proc_runtime_decode_type_payload(zcm_msg_t *msg,
                                          size_t summary_size);
 
 /**
+ * @brief Return the data role string for configured data sockets.
+ *
+ * Possible values include `NONE`, `PUB`, `SUB`, `PUSH`, `PULL`,
+ * and `+` combinations (for example: `PUB+SUB`, `PUSH+PULL`).
+ */
+const char *zcm_proc_runtime_data_role(const zcm_proc_runtime_cfg_t *cfg);
+
+/**
  * @brief Builtin command request literal used by zcm_proc command semantics.
  */
 const char *zcm_proc_runtime_builtin_ping_request(void);
@@ -144,10 +157,15 @@ const char *zcm_proc_runtime_builtin_reply_for_command(const char *cmd, uint32_t
 int zcm_proc_runtime_first_pub_port(const zcm_proc_runtime_cfg_t *cfg, int *out_port);
 
 /**
- * @brief Start detached background workers for configured PUB/SUB data sockets.
+ * @brief Return the first configured PUSH data port.
+ */
+int zcm_proc_runtime_first_push_port(const zcm_proc_runtime_cfg_t *cfg, int *out_port);
+
+/**
+ * @brief Start detached background workers for configured data sockets.
  *
- * PUB data sockets allocate their TCP port automatically from the current
- * domain range and write the chosen port back into `cfg->data_sockets`.
+ * PUB/PUSH data sockets allocate TCP ports automatically from the current
+ * domain range and write chosen ports back into `cfg->data_sockets`.
  */
 void zcm_proc_runtime_start_data_workers(zcm_proc_runtime_cfg_t *cfg,
                                          zcm_proc_t *proc,
