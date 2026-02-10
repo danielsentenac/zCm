@@ -253,15 +253,20 @@ static int do_send(const char *endpoint, const char *name, const char *type,
   zcm_msg_rewind(reply);
   if (zcm_msg_get_core(reply, &core) == 0) {
     if (core.kind == ZCM_CORE_VALUE_TEXT) {
-      printf("ack %s %.*s\n", zcm_msg_get_type(reply), (int)core.text_len, core.text);
+      printf("[REQ -> %s] received reply: msgType=%s core.text=%.*s\n",
+             name, zcm_msg_get_type(reply), (int)core.text_len, core.text);
     } else if (core.kind == ZCM_CORE_VALUE_DOUBLE) {
-      printf("ack %s %f\n", zcm_msg_get_type(reply), core.d);
+      printf("[REQ -> %s] received reply: msgType=%s core.double=%f\n",
+             name, zcm_msg_get_type(reply), core.d);
     } else if (core.kind == ZCM_CORE_VALUE_FLOAT) {
-      printf("ack %s %f\n", zcm_msg_get_type(reply), core.f);
+      printf("[REQ -> %s] received reply: msgType=%s core.float=%f\n",
+             name, zcm_msg_get_type(reply), core.f);
     } else if (core.kind == ZCM_CORE_VALUE_INT) {
-      printf("ack %s %d\n", zcm_msg_get_type(reply), core.i);
+      printf("[REQ -> %s] received reply: msgType=%s core.int=%d\n",
+             name, zcm_msg_get_type(reply), core.i);
     } else {
-      printf("ack %s\n", zcm_msg_get_type(reply));
+      printf("[REQ -> %s] received reply: msgType=%s\n",
+             name, zcm_msg_get_type(reply));
     }
   } else {
     const char *text = NULL;
@@ -270,12 +275,15 @@ static int do_send(const char *endpoint, const char *name, const char *type,
     zcm_msg_rewind(reply);
     if (zcm_msg_get_text(reply, &text, &text_len) == 0) {
       if (zcm_msg_get_int(reply, &code) == 0 && zcm_msg_remaining(reply) == 0) {
-        printf("ack %s %.*s code=%d\n", zcm_msg_get_type(reply), (int)text_len, text, code);
+        printf("[REQ -> %s] received reply: msgType=%s text=%.*s code=%d\n",
+               name, zcm_msg_get_type(reply), (int)text_len, text, code);
       } else {
-        printf("ack %s %.*s\n", zcm_msg_get_type(reply), (int)text_len, text);
+        printf("[REQ -> %s] received reply: msgType=%s text=%.*s\n",
+               name, zcm_msg_get_type(reply), (int)text_len, text);
       }
     } else {
-      printf("ack %s\n", zcm_msg_get_type(reply));
+      printf("[REQ -> %s] received reply: msgType=%s\n",
+             name, zcm_msg_get_type(reply));
     }
   }
 

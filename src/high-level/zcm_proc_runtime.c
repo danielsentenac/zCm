@@ -724,15 +724,18 @@ static void *sub_worker_main(void *arg) {
     usleep(300 * 1000);
   }
 
-  printf("data sub started: proc=%s target=%s endpoint=%s\n",
+  printf("[SUB %s] connected to publisher=%s endpoint=%s\n",
          ctx->proc_name, ctx->sock.target, ep);
+  fflush(stdout);
 
   for (;;) {
     char buf[512] = {0};
     size_t n = 0;
     if (zcm_socket_recv_bytes(sub, buf, sizeof(buf) - 1, &n) == 0) {
       buf[n] = '\0';
-      printf("data sub received: from=%s payload=%s\n", ctx->sock.target, buf);
+      printf("[SUB %s] received payload from %s: \"%s\" (%zu bytes)\n",
+             ctx->proc_name, ctx->sock.target, buf, n);
+      fflush(stdout);
     }
   }
 

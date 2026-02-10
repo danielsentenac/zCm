@@ -64,11 +64,12 @@ static int run_daemon(const char *cfg_path) {
         snprintf(err_text, sizeof(err_text),
                  "ERR malformed %s expected %s", req_type, handler->format);
         reply_text = err_text;
-        printf("received query malformed: type=%s expected=%s\n", req_type, handler->format);
+        printf("[REP %s] received malformed request: msgType=%s expected=%s\n",
+               cfg.name, req_type, handler->format);
       } else {
         reply_text = handler->reply;
-        printf("received query: type=%s %s\n",
-               req_type, parsed_summary[0] ? parsed_summary : "<no-args>");
+        printf("[REP %s] received request: msgType=%s payload={%s}\n",
+               cfg.name, req_type, parsed_summary[0] ? parsed_summary : "<no-args>");
       }
     } else {
       zcm_core_value_t core;
@@ -78,20 +79,25 @@ static int run_daemon(const char *cfg_path) {
         if (core.kind == ZCM_CORE_VALUE_TEXT) {
           cmd = core.text;
           cmd_len = core.text_len;
-          printf("received query: type=%s core.text=%.*s\n", req_type, (int)cmd_len, cmd);
+          printf("[REP %s] received request: msgType=%s core.text=%.*s\n",
+                 cfg.name, req_type, (int)cmd_len, cmd);
         } else if (core.kind == ZCM_CORE_VALUE_DOUBLE) {
-          printf("received query: type=%s core.double=%f\n", req_type, core.d);
+          printf("[REP %s] received request: msgType=%s core.double=%f\n",
+                 cfg.name, req_type, core.d);
         } else if (core.kind == ZCM_CORE_VALUE_FLOAT) {
-          printf("received query: type=%s core.float=%f\n", req_type, core.f);
+          printf("[REP %s] received request: msgType=%s core.float=%f\n",
+                 cfg.name, req_type, core.f);
         } else if (core.kind == ZCM_CORE_VALUE_INT) {
-          printf("received query: type=%s core.int=%d\n", req_type, core.i);
+          printf("[REP %s] received request: msgType=%s core.int=%d\n",
+                 cfg.name, req_type, core.i);
         }
       } else {
         zcm_msg_rewind(req);
         if (zcm_msg_get_text(req, &cmd, &cmd_len) == 0 &&
             zcm_msg_get_int(req, &req_code) == 0 &&
             zcm_msg_remaining(req) == 0) {
-          printf("received query: type=%s cmd=%.*s\n", req_type, (int)cmd_len, cmd);
+          printf("[REP %s] received request: msgType=%s cmd=%.*s\n",
+                 cfg.name, req_type, (int)cmd_len, cmd);
         } else {
           malformed = 1;
           req_code = 400;
@@ -99,7 +105,8 @@ static int run_daemon(const char *cfg_path) {
                    "ERR malformed request for type %s", req_type[0] ? req_type : "<none>");
           reply_text = err_text;
           reply_as_core = 0;
-          printf("received query malformed: type=%s\n", req_type[0] ? req_type : "<none>");
+          printf("[REP %s] received malformed request: msgType=%s\n",
+                 cfg.name, req_type[0] ? req_type : "<none>");
         }
       }
 
@@ -144,6 +151,9 @@ static int run_daemon(const char *cfg_path) {
       zcm_proc_free(proc);
       return 1;
     }
+    printf("[REP %s] sent reply: msgType=%s text=%s code=%d\n",
+           cfg.name, malformed ? "ERROR" : "REPLY", reply_text, req_code);
+    fflush(stdout);
     zcm_msg_free(reply);
     zcm_msg_free(req);
   }
