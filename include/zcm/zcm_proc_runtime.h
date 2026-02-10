@@ -58,6 +58,22 @@ typedef struct zcm_proc_runtime_cfg {
 } zcm_proc_runtime_cfg_t;
 
 /**
+ * @brief Optional callback for bytes received by SUB data workers.
+ *
+ * @param self_name Name of the current process.
+ * @param source_name Publisher process name from config target.
+ * @param payload Received payload bytes.
+ * @param payload_len Number of bytes in `payload`.
+ * @param user Opaque user pointer passed to worker startup.
+ */
+typedef void (*zcm_proc_runtime_sub_payload_cb_t)(
+    const char *self_name,
+    const char *source_name,
+    const void *payload,
+    size_t payload_len,
+    void *user);
+
+/**
  * @brief Parse and validate a runtime config XML into an in-memory structure.
  *
  * @param cfg_path Path to proc config XML.
@@ -108,7 +124,10 @@ int zcm_proc_runtime_first_pub_port(const zcm_proc_runtime_cfg_t *cfg, int *out_
 /**
  * @brief Start detached background workers for configured PUB/SUB data sockets.
  */
-void zcm_proc_runtime_start_data_workers(const zcm_proc_runtime_cfg_t *cfg, zcm_proc_t *proc);
+void zcm_proc_runtime_start_data_workers(const zcm_proc_runtime_cfg_t *cfg,
+                                         zcm_proc_t *proc,
+                                         zcm_proc_runtime_sub_payload_cb_t on_sub_payload,
+                                         void *user);
 
 #ifdef __cplusplus
 }

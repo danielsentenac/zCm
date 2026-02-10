@@ -557,6 +557,8 @@ typedef struct data_socket_worker_ctx {
   zcm_proc_t *proc;
   char proc_name[128];
   zcm_proc_data_socket_cfg_t sock;
+  zcm_proc_runtime_sub_payload_cb_t on_sub_payload;
+  void *user;
 } data_socket_worker_ctx_t;
 
 static int lookup_endpoint(zcm_proc_t *proc, const char *target, char *ep, size_t ep_size) {
@@ -733,6 +735,9 @@ static void *sub_worker_main(void *arg) {
     size_t n = 0;
     if (zcm_socket_recv_bytes(sub, buf, sizeof(buf) - 1, &n) == 0) {
       buf[n] = '\0';
+      if (ctx->on_sub_payload) {
+        ctx->on_sub_payload(ctx->proc_name, ctx->sock.target, buf, n, ctx->user);
+      }
       printf("[SUB %s] received payload from %s: \"%s\" (%zu bytes)\n",
              ctx->proc_name, ctx->sock.target, buf, n);
       fflush(stdout);
@@ -744,7 +749,10 @@ static void *sub_worker_main(void *arg) {
   return NULL;
 }
 
-void zcm_proc_runtime_start_data_workers(const zcm_proc_runtime_cfg_t *cfg, zcm_proc_t *proc) {
+void zcm_proc_runtime_start_data_workers(const zcm_proc_runtime_cfg_t *cfg,
+                                         zcm_proc_t *proc,
+                                         zcm_proc_runtime_sub_payload_cb_t on_sub_payload,
+                                         void *user) {
   if (!cfg || !proc) return;
   for (size_t i = 0; i < cfg->data_socket_count; i++) {
     data_socket_worker_ctx_t *ctx = (data_socket_worker_ctx_t *)calloc(1, sizeof(*ctx));
@@ -752,6 +760,8 @@ void zcm_proc_runtime_start_data_workers(const zcm_proc_runtime_cfg_t *cfg, zcm_
     ctx->proc = proc;
     snprintf(ctx->proc_name, sizeof(ctx->proc_name), "%s", cfg->name);
     ctx->sock = cfg->data_sockets[i];
+    ctx->on_sub_payload = on_sub_payload;
+    ctx->user = user;
 
     pthread_t tid;
     void *(*entry)(void *) =

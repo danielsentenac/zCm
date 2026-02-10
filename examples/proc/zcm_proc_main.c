@@ -13,6 +13,31 @@ static int text_equals_nocase(const char *text, uint32_t len, const char *lit) {
   return strncasecmp(text, lit, n) == 0;
 }
 
+/*
+ * User hook: customize this to process PUB bytes received by SUB sockets.
+ */
+static void app_on_sub_payload(const char *self_name,
+                               const char *source_name,
+                               const void *payload,
+                               size_t payload_len,
+                               void *user) {
+  (void)self_name;
+  (void)source_name;
+  (void)payload;
+  (void)payload_len;
+  (void)user;
+}
+
+/*
+ * User hook: customize this to inspect/manipulate each incoming REQ message.
+ * If you consume fields via zcm_msg_get_*, the caller rewinds the message after this hook.
+ */
+static void app_on_req_message(const char *self_name, zcm_msg_t *req, void *user) {
+  (void)self_name;
+  (void)req;
+  (void)user;
+}
+
 static int run_daemon(const char *cfg_path) {
   zcm_proc_runtime_cfg_t cfg;
   zcm_proc_t *proc = NULL;
@@ -28,7 +53,7 @@ static int run_daemon(const char *cfg_path) {
   if (cfg.data_socket_count > 0) {
     printf("data sockets configured: %zu\n", cfg.data_socket_count);
   }
-  zcm_proc_runtime_start_data_workers(&cfg, proc);
+  zcm_proc_runtime_start_data_workers(&cfg, proc, app_on_sub_payload, NULL);
 
   for (;;) {
     zcm_msg_t *req = zcm_msg_new();
@@ -40,6 +65,8 @@ static int run_daemon(const char *cfg_path) {
       zcm_msg_free(req);
       continue;
     }
+    app_on_req_message(cfg.name, req, NULL);
+    zcm_msg_rewind(req);
 
     int32_t req_code = 200;
     int malformed = 0;
