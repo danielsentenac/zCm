@@ -18,6 +18,7 @@ add_library(zcm_lib
   src/high-level/zcm_broker.c
   src/low-level/zcm_node.c
   src/high-level/zcm_proc.c
+  src/high-level/zcm_proc_runtime.c
   src/low-level/zcm_msg.c
 )
 
