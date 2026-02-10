@@ -96,6 +96,13 @@ if(ZCM_BUILD_TESTS)
     RUNTIME_OUTPUT_DIRECTORY ${ZCM_TEST_OUTPUT_DIR}
   )
 
+  add_executable(zcm_node_unique_name tests/node/zcm_node_unique_name.c)
+  target_link_libraries(zcm_node_unique_name PRIVATE zcm_lib)
+  add_test(NAME zcm_node_unique_name COMMAND zcm_node_unique_name)
+  set_target_properties(zcm_node_unique_name PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${ZCM_TEST_OUTPUT_DIR}
+  )
+
   add_executable(zcm_proc_reannounce tests/node/zcm_proc_reannounce.c)
   target_link_libraries(zcm_proc_reannounce PRIVATE zcm_lib)
   add_test(NAME zcm_proc_reannounce COMMAND zcm_proc_reannounce)

@@ -32,45 +32,95 @@ static struct zcm_broker_entry *entry_find(struct zcm_broker *b, const char *nam
   return NULL;
 }
 
+/*
+ * Register a basic name -> endpoint entry.
+ * Return codes:
+ *   0  success (new or idempotent same endpoint)
+ *   1  duplicate name with conflicting endpoint/owner
+ *  -1  allocation/internal error
+ */
 static int entry_set(struct zcm_broker *b, const char *name, const char *endpoint) {
   struct zcm_broker_entry *e = entry_find(b, name);
-  if (!e) {
-    e = (struct zcm_broker_entry *)calloc(1, sizeof(*e));
-    if (!e) return -1;
-    e->name = strdup(name);
-    if (!e->name) { free(e); return -1; }
-    e->next = b->head;
-    b->head = e;
-    e->pid = 0;
-  } else {
-    free(e->endpoint);
+  if (e) {
+    if (e->endpoint && strcmp(e->endpoint, endpoint) == 0) return 0;
+    return 1;
+  }
+
+  e = (struct zcm_broker_entry *)calloc(1, sizeof(*e));
+  if (!e) return -1;
+  e->name = strdup(name);
+  if (!e->name) {
+    free(e);
+    return -1;
   }
   e->endpoint = strdup(endpoint);
-  return e->endpoint ? 0 : -1;
+  if (!e->endpoint) {
+    free(e->name);
+    free(e);
+    return -1;
+  }
+  e->pid = 0;
+  e->next = b->head;
+  b->head = e;
+  return 0;
 }
 
+/*
+ * Register an extended entry.
+ * Return codes:
+ *   0  success (new or re-register by same owner)
+ *   1  duplicate name with different owner
+ *  -1  allocation/internal error
+ */
 static int entry_set_ex(struct zcm_broker *b, const char *name, const char *endpoint,
                         const char *ctrl_endpoint, const char *host, int pid) {
   struct zcm_broker_entry *e = entry_find(b, name);
+  if (e) {
+    int same_owner = 0;
+    if (e->pid > 0 && pid > 0 && e->pid == pid &&
+        e->host && host && strcmp(e->host, host) == 0) {
+      same_owner = 1;
+    }
+    if (!same_owner) return 1;
+  }
+
+  char *new_endpoint = endpoint ? strdup(endpoint) : NULL;
+  char *new_ctrl = ctrl_endpoint ? strdup(ctrl_endpoint) : NULL;
+  char *new_host = host ? strdup(host) : NULL;
+  if ((endpoint && !new_endpoint) || (ctrl_endpoint && !new_ctrl) || (host && !new_host)) {
+    free(new_endpoint);
+    free(new_ctrl);
+    free(new_host);
+    return -1;
+  }
+
   if (!e) {
     e = (struct zcm_broker_entry *)calloc(1, sizeof(*e));
-    if (!e) return -1;
+    if (!e) {
+      free(new_endpoint);
+      free(new_ctrl);
+      free(new_host);
+      return -1;
+    }
     e->name = strdup(name);
-    if (!e->name) { free(e); return -1; }
+    if (!e->name) {
+      free(new_endpoint);
+      free(new_ctrl);
+      free(new_host);
+      free(e);
+      return -1;
+    }
     e->next = b->head;
     b->head = e;
-  } else {
-    free(e->endpoint);
-    free(e->ctrl_endpoint);
-    free(e->host);
   }
-  e->endpoint = endpoint ? strdup(endpoint) : NULL;
-  e->ctrl_endpoint = ctrl_endpoint ? strdup(ctrl_endpoint) : NULL;
-  e->host = host ? strdup(host) : NULL;
+
+  free(e->endpoint);
+  free(e->ctrl_endpoint);
+  free(e->host);
+  e->endpoint = new_endpoint;
+  e->ctrl_endpoint = new_ctrl;
+  e->host = new_host;
   e->pid = pid;
-  if (endpoint && !e->endpoint) return -1;
-  if (ctrl_endpoint && !e->ctrl_endpoint) return -1;
-  if (host && !e->host) return -1;
   return 0;
 }
 
@@ -137,8 +187,11 @@ static void *broker_thread(void *arg) {
       memcpy(endpoint, zmq_msg_data(&part), elen);
       zmq_msg_close(&part);
 
-      if (entry_set(b, name, endpoint) == 0) {
+      int reg_rc = entry_set(b, name, endpoint);
+      if (reg_rc == 0) {
         zmq_send(sock, "OK", 2, 0);
+      } else if (reg_rc == 1) {
+        zmq_send(sock, "DUPLICATE", 9, 0);
       } else {
         zmq_send(sock, "ERR", 3, 0);
       }
@@ -190,8 +243,11 @@ static void *broker_thread(void *arg) {
       zmq_msg_close(&part);
 
       int pid = atoi(pid_str);
-      if (entry_set_ex(b, name, endpoint, ctrl_ep, host, pid) == 0) {
+      int reg_rc = entry_set_ex(b, name, endpoint, ctrl_ep, host, pid);
+      if (reg_rc == 0) {
         zmq_send(sock, "OK", 2, 0);
+      } else if (reg_rc == 1) {
+        zmq_send(sock, "DUPLICATE", 9, 0);
       } else {
         zmq_send(sock, "ERR", 3, 0);
       }

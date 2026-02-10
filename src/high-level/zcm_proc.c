@@ -440,7 +440,7 @@ int zcm_proc_init(const char *name, zcm_socket_type_t data_type, int bind_data,
 
   const char *reg_ep = (data_port > 0) ? data_reg_ep : ctrl_reg_ep;
   if (zcm_node_register_ex(node, name, reg_ep, ctrl_reg_ep, use_host, getpid()) != 0) {
-    fprintf(stderr, "zcm_proc: register failed (broker not found)\n");
+    fprintf(stderr, "zcm_proc: register failed (broker not found or duplicate name)\n");
     goto fail;
   }
 
