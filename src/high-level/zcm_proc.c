@@ -375,6 +375,20 @@ int zcm_proc_init(const char *name, zcm_socket_type_t data_type, int bind_data,
   int cfg_bind_data = bind_data ? 1 : 0;
   int cfg_ctrl_timeout_ms = 200;
   int announce_interval_ms = ZCM_PROC_REANNOUNCE_MS_DEFAULT;
+  int rc = -1;
+
+  char *broker = NULL;
+  char *host = NULL;
+  int first_port = 0;
+  int range_size = 0;
+
+  zcm_context_t *ctx = NULL;
+  zcm_node_t *node = NULL;
+  zcm_socket_t *data = NULL;
+  zcm_socket_t *ctrl = NULL;
+  int data_port = -1;
+  int ctrl_port = -1;
+
   const char *announce_env = getenv("ZCM_PROC_REANNOUNCE_MS");
   if (announce_env && *announce_env) {
     int parsed = 0;
@@ -388,27 +402,19 @@ int zcm_proc_init(const char *name, zcm_socket_type_t data_type, int bind_data,
     }
   }
 
-  int rc = -1;
   if (load_proc_config(name, &cfg_data_type, &cfg_bind_data, &cfg_ctrl_timeout_ms) != 0) {
     goto fail;
   }
-
-  char *broker = NULL;
-  char *host = NULL;
-  int first_port = 0;
-  int range_size = 0;
   if (load_domain_info(&broker, &host, &first_port, &range_size) != 0) {
     fprintf(stderr, "zcm_proc: missing ZCMDOMAIN or ZCmDomains entry\n");
     goto fail;
   }
 
-  zcm_context_t *ctx = zcm_context_new();
+  ctx = zcm_context_new();
   if (!ctx) goto fail;
-  zcm_node_t *node = zcm_node_new(ctx, broker);
+  node = zcm_node_new(ctx, broker);
   if (!node) goto fail;
 
-  zcm_socket_t *data = NULL;
-  int data_port = -1;
   if (cfg_bind_data) {
     data = zcm_socket_new(ctx, cfg_data_type);
     if (!data) goto fail;
@@ -418,10 +424,9 @@ int zcm_proc_init(const char *name, zcm_socket_type_t data_type, int bind_data,
     }
   }
 
-  zcm_socket_t *ctrl = zcm_socket_new(ctx, ZCM_SOCK_REP);
+  ctrl = zcm_socket_new(ctx, ZCM_SOCK_REP);
   if (!ctrl) goto fail;
   zcm_socket_set_timeouts(ctrl, cfg_ctrl_timeout_ms);
-  int ctrl_port = -1;
   if (bind_in_range(ctrl, first_port, range_size, &ctrl_port, data_port) != 0) {
     fprintf(stderr, "zcm_proc: control bind failed\n");
     goto fail;
