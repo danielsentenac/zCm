@@ -37,9 +37,9 @@ Bytes item
   - `len` (u32)
   - `data` (len bytes)
 
-## Core property
+## Value property
 For command-line interoperability and generic process handling, zCm defines a
-standardized core scalar property encoded as three typed items in order:
+standardized scalar value property encoded as three typed items in order:
 
 1. `TEXT` marker: `__zcm_core__`
 2. `TEXT` scalar kind: `text` | `double` | `float` | `int`
@@ -50,11 +50,11 @@ standardized core scalar property encoded as three typed items in order:
    - `INT` for `int`
 
 Library helpers:
-- `zcm_msg_put_core_text()`
-- `zcm_msg_put_core_double()`
-- `zcm_msg_put_core_float()`
-- `zcm_msg_put_core_int()`
-- `zcm_msg_get_core()`
+- `zcm_msg_put_value_text()`
+- `zcm_msg_put_value_double()`
+- `zcm_msg_put_value_float()`
+- `zcm_msg_put_value_int()`
+- `zcm_msg_get_value()`
 
 ## Endianness
 All numeric fields are stored in **little-endian** encoding, regardless of host endianness.

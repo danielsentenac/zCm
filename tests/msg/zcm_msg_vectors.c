@@ -42,12 +42,12 @@ static int test_vector_simple(void) {
   return 0;
 }
 
-static int test_core_property(void) {
+static int test_value_property(void) {
   zcm_msg_t *m = zcm_msg_new();
   if (!m) return 1;
 
   zcm_msg_set_type(m, "CoreTest");
-  if (zcm_msg_put_core_int(m, 42) != 0) return 1;
+  if (zcm_msg_put_value_int(m, 42) != 0) return 1;
 
   const void *data = NULL;
   size_t len = 0;
@@ -59,10 +59,10 @@ static int test_core_property(void) {
   if (!m2) return 1;
   if (zcm_msg_from_bytes(m2, data, len) != 0) return 1;
 
-  zcm_core_value_t core;
+  zcm_msg_value_t value;
   zcm_msg_rewind(m2);
-  if (zcm_msg_get_core(m2, &core) != 0) return 1;
-  if (core.kind != ZCM_CORE_VALUE_INT || core.i != 42) return 1;
+  if (zcm_msg_get_value(m2, &value) != 0) return 1;
+  if (value.kind != ZCM_MSG_VALUE_INT || value.i != 42) return 1;
 
   free(owned);
   zcm_msg_free(m);
@@ -72,7 +72,7 @@ static int test_core_property(void) {
 
 int main(void) {
   int rc = test_vector_simple();
-  if (rc == 0) rc = test_core_property();
+  if (rc == 0) rc = test_value_property();
   if (rc != 0) {
     fprintf(stderr, "zcm_msg_vectors failed\n");
   } else {
