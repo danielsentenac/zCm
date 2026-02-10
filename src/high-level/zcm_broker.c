@@ -2,8 +2,11 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <pthread.h>
 #include <stdio.h>
+#include <signal.h>
+#include <errno.h>
 #include <unistd.h>
 
 #include <zmq.h>
@@ -24,6 +27,75 @@ struct zcm_broker {
   int running;
   struct zcm_broker_entry *head;
 };
+
+static int entry_remove(struct zcm_broker *b, const char *name);
+
+static void entry_free(struct zcm_broker_entry *e) {
+  if (!e) return;
+  free(e->name);
+  free(e->endpoint);
+  free(e->ctrl_endpoint);
+  free(e->host);
+  free(e);
+}
+
+static int host_is_local(const char *host) {
+  if (!host || !*host) return 0;
+  if (strcmp(host, "127.0.0.1") == 0 ||
+      strcmp(host, "::1") == 0 ||
+      strcasecmp(host, "localhost") == 0) {
+    return 1;
+  }
+
+  char local_host[256] = {0};
+  if (gethostname(local_host, sizeof(local_host) - 1) != 0) return 0;
+  local_host[sizeof(local_host) - 1] = '\0';
+  if (strcasecmp(host, local_host) == 0) return 1;
+
+  char host_short[256] = {0};
+  char local_short[256] = {0};
+  snprintf(host_short, sizeof(host_short), "%s", host);
+  snprintf(local_short, sizeof(local_short), "%s", local_host);
+  char *dot = strchr(host_short, '.');
+  if (dot) *dot = '\0';
+  dot = strchr(local_short, '.');
+  if (dot) *dot = '\0';
+  return strcasecmp(host_short, local_short) == 0;
+}
+
+static int pid_is_alive_local(int pid) {
+  if (pid <= 0) return 0;
+  if (kill((pid_t)pid, 0) == 0) return 1;
+  return errno == EPERM;
+}
+
+static int entry_is_stale_local(const struct zcm_broker_entry *e) {
+  if (!e || e->pid <= 0) return 0;
+  if (!host_is_local(e->host)) return 0;
+  return !pid_is_alive_local(e->pid);
+}
+
+static int entry_prune_stale_local(struct zcm_broker *b) {
+  int removed = 0;
+  struct zcm_broker_entry *prev = NULL;
+  struct zcm_broker_entry *e = b->head;
+
+  while (e) {
+    if (entry_is_stale_local(e)) {
+      struct zcm_broker_entry *dead = e;
+      if (prev) prev->next = e->next;
+      else b->head = e->next;
+      e = e->next;
+      entry_free(dead);
+      removed++;
+      continue;
+    }
+    prev = e;
+    e = e->next;
+  }
+
+  return removed;
+}
 
 static struct zcm_broker_entry *entry_find(struct zcm_broker *b, const char *name) {
   for (struct zcm_broker_entry *e = b->head; e; e = e->next) {
@@ -75,6 +147,10 @@ static int entry_set(struct zcm_broker *b, const char *name, const char *endpoin
 static int entry_set_ex(struct zcm_broker *b, const char *name, const char *endpoint,
                         const char *ctrl_endpoint, const char *host, int pid) {
   struct zcm_broker_entry *e = entry_find(b, name);
+  if (e && entry_is_stale_local(e)) {
+    (void)entry_remove(b, name);
+    e = NULL;
+  }
   if (e) {
     int same_owner = 0;
     if (e->pid > 0 && pid > 0 && e->pid == pid &&
@@ -131,11 +207,7 @@ static int entry_remove(struct zcm_broker *b, const char *name) {
     if (strcmp(e->name, name) == 0) {
       if (prev) prev->next = e->next;
       else b->head = e->next;
-      free(e->name);
-      free(e->endpoint);
-      free(e->ctrl_endpoint);
-      free(e->host);
-      free(e);
+      entry_free(e);
       return 0;
     }
     prev = e;
@@ -166,6 +238,8 @@ static void *broker_thread(void *arg) {
     if (cmd_len >= sizeof(cmd)) cmd_len = sizeof(cmd) - 1;
     memcpy(cmd, zmq_msg_data(&part), cmd_len);
     zmq_msg_close(&part);
+
+    (void)entry_prune_stale_local(b);
 
     if (strcmp(cmd, "REGISTER") == 0) {
       char name[256] = {0};
@@ -380,9 +454,7 @@ void zcm_broker_stop(zcm_broker_t *broker) {
   struct zcm_broker_entry *e = broker->head;
   while (e) {
     struct zcm_broker_entry *n = e->next;
-    free(e->name);
-    free(e->endpoint);
-    free(e);
+    entry_free(e);
     e = n;
   }
   free(broker->endpoint);

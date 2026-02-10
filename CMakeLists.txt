@@ -103,6 +103,13 @@ if(ZCM_BUILD_TESTS)
     RUNTIME_OUTPUT_DIRECTORY ${ZCM_TEST_OUTPUT_DIR}
   )
 
+  add_executable(zcm_node_prune_dead tests/node/zcm_node_prune_dead.c)
+  target_link_libraries(zcm_node_prune_dead PRIVATE zcm_lib)
+  add_test(NAME zcm_node_prune_dead COMMAND zcm_node_prune_dead)
+  set_target_properties(zcm_node_prune_dead PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${ZCM_TEST_OUTPUT_DIR}
+  )
+
   add_executable(zcm_proc_reannounce tests/node/zcm_proc_reannounce.c)
   target_link_libraries(zcm_proc_reannounce PRIVATE zcm_lib)
   add_test(NAME zcm_proc_reannounce COMMAND zcm_proc_reannounce)
