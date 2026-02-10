@@ -2,10 +2,13 @@
 #include "zcm/zcm_node.h"
 #include "zcm/zcm_msg.h"
 
+#include <ctype.h>
+#include <errno.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -15,7 +18,10 @@ static void usage(const char *prog) {
   fprintf(stderr,
           "usage:\n"
           "  %s names\n"
-          "  %s send NAME -type TYPE (-t TEXT | -d DOUBLE | -f FLOAT | -i INTEGER)+\n"
+          "  %s send NAME -type TYPE "
+          "(-t TEXT | -d DOUBLE | -f FLOAT | -i INTEGER |\n"
+          "                       -c CHAR | -s SHORT | -l LONG | -b BYTES | -a ARRAY_SPEC)+\n"
+          "    ARRAY_SPEC: char:v1,v2 | short:v1,v2 | int:v1,v2 | float:v1,v2 | double:v1,v2\n"
           "  %s kill NAME\n"
           "  %s ping NAME\n"
           "  %s broker [ping|stop|list]\n",
@@ -132,7 +138,12 @@ typedef enum {
   SEND_VALUE_TEXT = 1,
   SEND_VALUE_DOUBLE = 2,
   SEND_VALUE_FLOAT = 3,
-  SEND_VALUE_INT = 4
+  SEND_VALUE_INT = 4,
+  SEND_VALUE_CHAR = 5,
+  SEND_VALUE_SHORT = 6,
+  SEND_VALUE_LONG = 7,
+  SEND_VALUE_BYTES = 8,
+  SEND_VALUE_ARRAY = 9
 } send_value_kind_t;
 
 typedef struct send_value {
@@ -152,6 +163,41 @@ static int parse_int32_str(const char *text, int32_t *out) {
   return 0;
 }
 
+static int parse_int16_str(const char *text, int16_t *out) {
+  if (!text || !out) return -1;
+  char *end = NULL;
+  long v = strtol(text, &end, 10);
+  if (!end || *end != '\0') return -1;
+  if (v < INT16_MIN || v > INT16_MAX) return -1;
+  *out = (int16_t)v;
+  return 0;
+}
+
+static int parse_int64_str(const char *text, int64_t *out) {
+  if (!text || !out) return -1;
+  char *end = NULL;
+  errno = 0;
+  long long v = strtoll(text, &end, 10);
+  if (!end || *end != '\0' || errno == ERANGE) return -1;
+  *out = (int64_t)v;
+  return 0;
+}
+
+static int parse_char_str(const char *text, char *out) {
+  if (!text || !out) return -1;
+  size_t n = strlen(text);
+  if (n == 1) {
+    *out = text[0];
+    return 0;
+  }
+
+  int32_t iv = 0;
+  if (parse_int32_str(text, &iv) != 0) return -1;
+  if (iv < -128 || iv > 127) return -1;
+  *out = (char)iv;
+  return 0;
+}
+
 static int parse_float_str(const char *text, float *out) {
   if (!text || !out) return -1;
   char *end = NULL;
@@ -168,6 +214,156 @@ static int parse_double_str(const char *text, double *out) {
   if (!end || *end != '\0') return -1;
   *out = v;
   return 0;
+}
+
+static void trim_ws_inplace(char *text) {
+  if (!text) return;
+  char *start = text;
+  while (*start && isspace((unsigned char)*start)) start++;
+  if (start != text) memmove(text, start, strlen(start) + 1);
+  size_t n = strlen(text);
+  while (n > 0 && isspace((unsigned char)text[n - 1])) {
+    text[--n] = '\0';
+  }
+}
+
+static int parse_array_type(const char *text, zcm_msg_array_type_t *out) {
+  if (!text || !out) return -1;
+  if (strcasecmp(text, "char") == 0) {
+    *out = ZCM_MSG_ARRAY_CHAR;
+    return 0;
+  }
+  if (strcasecmp(text, "short") == 0) {
+    *out = ZCM_MSG_ARRAY_SHORT;
+    return 0;
+  }
+  if (strcasecmp(text, "int") == 0) {
+    *out = ZCM_MSG_ARRAY_INT;
+    return 0;
+  }
+  if (strcasecmp(text, "float") == 0) {
+    *out = ZCM_MSG_ARRAY_FLOAT;
+    return 0;
+  }
+  if (strcasecmp(text, "double") == 0) {
+    *out = ZCM_MSG_ARRAY_DOUBLE;
+    return 0;
+  }
+  return -1;
+}
+
+static size_t array_elem_size(zcm_msg_array_type_t type) {
+  switch (type) {
+    case ZCM_MSG_ARRAY_CHAR: return 1;
+    case ZCM_MSG_ARRAY_SHORT: return 2;
+    case ZCM_MSG_ARRAY_INT: return 4;
+    case ZCM_MSG_ARRAY_FLOAT: return 4;
+    case ZCM_MSG_ARRAY_DOUBLE: return 8;
+    default: return 0;
+  }
+}
+
+static int grow_array_buf(void **buf, size_t elem_size, size_t *cap, size_t need) {
+  if (!buf || !cap || elem_size == 0) return -1;
+  if (need <= *cap) return 0;
+  size_t new_cap = (*cap == 0) ? 8 : *cap;
+  while (new_cap < need) new_cap *= 2;
+  void *next = realloc(*buf, new_cap * elem_size);
+  if (!next) return -1;
+  *buf = next;
+  *cap = new_cap;
+  return 0;
+}
+
+static int set_payload_array(zcm_msg_t *msg, const char *spec) {
+  if (!msg || !spec) return -1;
+
+  const char *sep = strchr(spec, ':');
+  if (!sep) return -1;
+
+  char type_text[32] = {0};
+  size_t type_len = (size_t)(sep - spec);
+  if (type_len == 0 || type_len >= sizeof(type_text)) return -1;
+  memcpy(type_text, spec, type_len);
+  type_text[type_len] = '\0';
+  trim_ws_inplace(type_text);
+
+  zcm_msg_array_type_t array_type;
+  if (parse_array_type(type_text, &array_type) != 0) return -1;
+
+  const char *items_text = sep + 1;
+  while (*items_text && isspace((unsigned char)*items_text)) items_text++;
+  if (*items_text == '\0') {
+    return zcm_msg_put_array(msg, array_type, 0, NULL);
+  }
+
+  char *list = strdup(items_text);
+  if (!list) return -1;
+
+  size_t cap = 0;
+  size_t count = 0;
+  void *items = NULL;
+  size_t elem_size = array_elem_size(array_type);
+  if (elem_size == 0) {
+    free(list);
+    return -1;
+  }
+
+  int rc = -1;
+  char *saveptr = NULL;
+  for (char *tok = strtok_r(list, ",", &saveptr); tok; tok = strtok_r(NULL, ",", &saveptr)) {
+    trim_ws_inplace(tok);
+    if (tok[0] == '\0') goto out;
+    if (grow_array_buf(&items, elem_size, &cap, count + 1) != 0) goto out;
+
+    switch (array_type) {
+      case ZCM_MSG_ARRAY_CHAR: {
+        char v = 0;
+        if (parse_char_str(tok, &v) != 0) goto out;
+        ((char *)items)[count] = v;
+        break;
+      }
+      case ZCM_MSG_ARRAY_SHORT: {
+        int16_t v = 0;
+        if (parse_int16_str(tok, &v) != 0) goto out;
+        ((int16_t *)items)[count] = v;
+        break;
+      }
+      case ZCM_MSG_ARRAY_INT: {
+        int32_t v = 0;
+        if (parse_int32_str(tok, &v) != 0) goto out;
+        ((int32_t *)items)[count] = v;
+        break;
+      }
+      case ZCM_MSG_ARRAY_FLOAT: {
+        float v = 0.0f;
+        if (parse_float_str(tok, &v) != 0) goto out;
+        ((float *)items)[count] = v;
+        break;
+      }
+      case ZCM_MSG_ARRAY_DOUBLE: {
+        double v = 0.0;
+        if (parse_double_str(tok, &v) != 0) goto out;
+        ((double *)items)[count] = v;
+        break;
+      }
+      default:
+        goto out;
+    }
+
+    count++;
+  }
+
+  if (count == 0) {
+    rc = zcm_msg_put_array(msg, array_type, 0, NULL);
+  } else {
+    rc = zcm_msg_put_array(msg, array_type, (uint32_t)count, items);
+  }
+
+out:
+  free(items);
+  free(list);
+  return rc;
 }
 
 static int set_payload_value(zcm_msg_t *msg, send_value_kind_t kind, const char *value) {
@@ -190,6 +386,25 @@ static int set_payload_value(zcm_msg_t *msg, send_value_kind_t kind, const char 
       if (parse_int32_str(value, &v) != 0) return -1;
       return zcm_msg_put_int(msg, v);
     }
+    case SEND_VALUE_CHAR: {
+      char v = 0;
+      if (parse_char_str(value, &v) != 0) return -1;
+      return zcm_msg_put_char(msg, v);
+    }
+    case SEND_VALUE_SHORT: {
+      int16_t v = 0;
+      if (parse_int16_str(value, &v) != 0) return -1;
+      return zcm_msg_put_short(msg, v);
+    }
+    case SEND_VALUE_LONG: {
+      int64_t v = 0;
+      if (parse_int64_str(value, &v) != 0) return -1;
+      return zcm_msg_put_long(msg, v);
+    }
+    case SEND_VALUE_BYTES:
+      return zcm_msg_put_bytes(msg, value, (uint32_t)strlen(value));
+    case SEND_VALUE_ARRAY:
+      return set_payload_array(msg, value);
     default:
       return -1;
   }
@@ -473,13 +688,23 @@ static int parse_send_args(int argc, char **argv,
     } else if ((strcmp(argv[i], "-t") == 0 ||
                 strcmp(argv[i], "-d") == 0 ||
                 strcmp(argv[i], "-f") == 0 ||
-                strcmp(argv[i], "-i") == 0) && i + 1 < argc) {
+                strcmp(argv[i], "-i") == 0 ||
+                strcmp(argv[i], "-c") == 0 ||
+                strcmp(argv[i], "-s") == 0 ||
+                strcmp(argv[i], "-l") == 0 ||
+                strcmp(argv[i], "-b") == 0 ||
+                strcmp(argv[i], "-a") == 0) && i + 1 < argc) {
       if (*value_count >= SEND_VALUE_MAX) return -1;
       send_value_t *slot = &values[*value_count];
       if (strcmp(argv[i], "-t") == 0) slot->kind = SEND_VALUE_TEXT;
       else if (strcmp(argv[i], "-d") == 0) slot->kind = SEND_VALUE_DOUBLE;
       else if (strcmp(argv[i], "-f") == 0) slot->kind = SEND_VALUE_FLOAT;
-      else slot->kind = SEND_VALUE_INT;
+      else if (strcmp(argv[i], "-i") == 0) slot->kind = SEND_VALUE_INT;
+      else if (strcmp(argv[i], "-c") == 0) slot->kind = SEND_VALUE_CHAR;
+      else if (strcmp(argv[i], "-s") == 0) slot->kind = SEND_VALUE_SHORT;
+      else if (strcmp(argv[i], "-l") == 0) slot->kind = SEND_VALUE_LONG;
+      else if (strcmp(argv[i], "-b") == 0) slot->kind = SEND_VALUE_BYTES;
+      else slot->kind = SEND_VALUE_ARRAY;
       slot->value = argv[++i];
       (*value_count)++;
     } else {

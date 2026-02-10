@@ -78,6 +78,11 @@ Send a typed message (explicit type required):
 ./build/tools/zcm send NAME -type ZCM_CMD -i 42
 ./build/tools/zcm send NAME -type ZCM_CMD -f 3.14
 ./build/tools/zcm send NAME -type ZCM_CMD -d 2.718281828
+./build/tools/zcm send NAME -type ZCM_CMD -c A
+./build/tools/zcm send NAME -type ZCM_CMD -s 123
+./build/tools/zcm send NAME -type ZCM_CMD -l 1234567890123
+./build/tools/zcm send NAME -type ZCM_CMD -b "raw-bytes"
+./build/tools/zcm send NAME -type ZCM_CMD -a int:1,2,3
 ./build/tools/zcm send NAME -type CustomType -t "hello"
 ./build/tools/zcm send basic -type QUERY -d 5 -d 7 -t action -d 0
 ```
@@ -119,7 +124,9 @@ Process config at init (required):
   - builtin command behavior is fixed: `PING -> PONG` (default reply `OK`)
   - repeated `<type name=... reply=...><arg kind=.../>...</type>` with ordered payload args
   - malformed TYPE requests are rejected with `ERROR` and expected TYPE format
-  - `zcm send` preserves the exact order of repeated `-t/-d/-f/-i` flags
+  - `zcm send` preserves the exact order of repeated payload flags
+  - payload flags: `-t/-d/-f/-i/-c/-s/-l/-b/-a`
+  - `-a` uses `kind:v1,v2,...` with `kind=char|short|int|float|double`
 - Examples: `data/basic.cfg`, `data/publisher.cfg`, `data/subscriber.cfg`, `docs/config/zcmproc.cfg`
 
 Broker resolution for `zcm` CLI and broker:
@@ -160,6 +167,8 @@ ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm send zcmproc -type 
 ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm send zcmproc -type ZCM_CMD -i 42
 ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm send zcmproc -type ZCM_CMD -f 3.14
 ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm send zcmproc -type ZCM_CMD -d 2.718281828
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm send zcmproc -type ZCM_CMD -l 99
+ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm send zcmproc -type ZCM_CMD -a short:1,2,3
 ```
 
 Ordered TYPE payload example:
