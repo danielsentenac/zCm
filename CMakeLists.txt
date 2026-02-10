@@ -117,11 +117,16 @@ if(ZCM_BUILD_EXAMPLES)
 endif()
 
 if(ZCM_BUILD_TOOLS)
-  add_executable(cm_bridge tools/cm-bridge/cm_bridge.c)
-  target_link_libraries(cm_bridge PRIVATE zcm_lib)
-  set_target_properties(cm_bridge PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${ZCM_TOOL_OUTPUT_DIR}
-  )
+  set(CM_BRIDGE_SRC "${CMAKE_CURRENT_SOURCE_DIR}/tools/cm-bridge/cm_bridge.c")
+  if(EXISTS "${CM_BRIDGE_SRC}")
+    add_executable(cm_bridge "${CM_BRIDGE_SRC}")
+    target_link_libraries(cm_bridge PRIVATE zcm_lib)
+    set_target_properties(cm_bridge PROPERTIES
+      RUNTIME_OUTPUT_DIRECTORY ${ZCM_TOOL_OUTPUT_DIR}
+    )
+  else()
+    message(STATUS "Skipping cm_bridge: source file not found at ${CM_BRIDGE_SRC}")
+  endif()
 
   add_executable(zcm tools/command-line/zcm_cli.c)
   target_link_libraries(zcm PRIVATE zcm_lib pthread)
