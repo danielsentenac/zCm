@@ -48,9 +48,6 @@ typedef struct zcm_proc_type_handler_cfg {
 
 typedef struct zcm_proc_runtime_cfg {
   char name[128];
-  char ping_request[64];
-  char ping_reply[64];
-  char default_reply[64];
   zcm_proc_type_handler_cfg_t type_handlers[ZCM_PROC_TYPE_HANDLER_MAX];
   size_t type_handler_count;
   zcm_proc_data_socket_cfg_t data_sockets[ZCM_PROC_DATA_SOCKET_MAX];

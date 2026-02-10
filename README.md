@@ -116,7 +116,7 @@ Process config at init (required):
   - `SUB` uses `targets=<proc-a,proc-b,...>` (or legacy `target=<proc-name>`)
   - each `SUB` target publisher port is discovered via default request `DATA_PORT`
 - Optional `<handlers>` adds request reply rules:
-  - `<ping pingRequest=... pingReply=... defaultReply=...>`
+  - builtin command behavior is fixed: `PING -> PONG` (default reply `OK`)
   - repeated `<type name=... reply=...><arg kind=.../>...</type>` with ordered payload args
   - malformed TYPE requests are rejected with `ERROR` and expected TYPE format
   - `zcm send` preserves the exact order of repeated `-t/-d/-f/-i` flags

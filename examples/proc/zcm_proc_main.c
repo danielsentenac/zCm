@@ -7,6 +7,10 @@
 #include <string.h>
 #include <strings.h>
 
+static const char *k_ping_request = "PING";
+static const char *k_ping_reply = "PONG";
+static const char *k_default_reply = "OK";
+
 static int text_equals_nocase(const char *text, uint32_t len, const char *lit) {
   size_t n = strlen(lit);
   if (len != n) return 0;
@@ -45,8 +49,8 @@ static int run_daemon(const char *cfg_path) {
   if (zcm_proc_runtime_bootstrap(cfg_path, &cfg, &proc, &rep) != 0) return 1;
 
   printf("zcm_proc daemon started: %s\n", cfg.name);
-  printf("ping handler: %s -> %s (default=%s)\n",
-         cfg.ping_request, cfg.ping_reply, cfg.default_reply);
+  printf("builtin command behavior: %s -> %s (default=%s)\n",
+         k_ping_request, k_ping_reply, k_default_reply);
   if (cfg.type_handler_count > 0) {
     printf("type handlers loaded: %zu\n", cfg.type_handler_count);
   }
@@ -76,7 +80,7 @@ static int run_daemon(const char *cfg_path) {
     char err_text[512] = {0};
     char dynamic_reply[64] = {0};
     char parsed_summary[512] = {0};
-    const char *reply_text = cfg.default_reply;
+    const char *reply_text = k_default_reply;
 
     if (!req_type) req_type = "";
 
@@ -157,10 +161,10 @@ static int run_daemon(const char *cfg_path) {
             snprintf(err_text, sizeof(err_text), "ERR no PUB dataSocket configured");
             reply_text = err_text;
           }
-        } else if (cmd && text_equals_nocase(cmd, cmd_len, cfg.ping_request)) {
-          reply_text = cfg.ping_reply;
+        } else if (cmd && text_equals_nocase(cmd, cmd_len, k_ping_request)) {
+          reply_text = k_ping_reply;
         } else {
-          reply_text = cfg.default_reply;
+          reply_text = k_default_reply;
         }
       }
     }

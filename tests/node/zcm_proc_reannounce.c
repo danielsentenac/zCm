@@ -97,9 +97,6 @@ int main(void) {
           "<procConfig>\n"
           "  <process name=\"reannounce\">\n"
           "    <control timeoutMs=\"100\"/>\n"
-          "    <handlers>\n"
-          "      <ping pingRequest=\"PING\" pingReply=\"PONG\" defaultReply=\"OK\"/>\n"
-          "    </handlers>\n"
           "  </process>\n"
           "</procConfig>\n");
   fclose(cfg);
