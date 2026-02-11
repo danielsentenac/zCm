@@ -191,4 +191,6 @@ Generic data-path sample procs:
 
 ## Status
 Scaffolded with a working broker/registry + typed message envelope.
-See `docs/zcm-proc.md`, `docs/zcm-msg.md`, and `docs/tests.md`.
+- [Process guide (`zcm_proc`)](docs/zcm-proc.md)
+- [Message format (`zcm_msg`)](docs/zcm-msg.md)
+- [Test suite and execution](docs/tests.md)
