@@ -17,6 +17,7 @@ inject_theme_links() {
     /<\/head>/ && !done {
       print "<link href=\"doxygen-awesome.css\" rel=\"stylesheet\" type=\"text/css\"/>";
       print "<link href=\"doxygen-awesome-sidebar-only.css\" rel=\"stylesheet\" type=\"text/css\"/>";
+      print "<link href=\"zcm-dark.css\" rel=\"stylesheet\" type=\"text/css\"/>";
       done = 1;
     }
     { print }
