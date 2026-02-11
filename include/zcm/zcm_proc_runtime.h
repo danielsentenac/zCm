@@ -46,7 +46,6 @@ typedef enum zcm_proc_type_arg_kind {
 
 typedef struct zcm_proc_type_handler_cfg {
   char name[64];
-  char reply[128];
   zcm_proc_type_arg_kind_t args[ZCM_PROC_TYPE_HANDLER_ARG_MAX];
   size_t arg_count;
   char format[256];

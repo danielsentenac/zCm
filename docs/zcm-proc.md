@@ -39,9 +39,11 @@ Optional:
 
 Handlers:
 - builtin command behavior is fixed: `PING -> PONG` (default reply `OK`)
-- `<type name="..." reply="..."> <arg kind="..."/> ... </type>`
+- `<type name="..."> <arg kind="..."/> ... </type>`
 - `arg kind`: `text`, `double`, `float`, `int`
 - TYPE payload order is strict.
+- TYPE handler reply is built in user code and sent as typed message
+  `"<REQ_TYPE>_RPL"` with any payload fields your handler writes.
 - Malformed TYPE payload reply: `ERROR` with expected format.
 - each `SUB` target discovers publisher port with command `DATA_PORT_PUB`
   (fallback alias: `DATA_PORT`).
@@ -56,7 +58,7 @@ Handlers:
     <dataSocket type="SUB" targets="publisher" topics="publisher"/>
     <control timeoutMs="200"/>
     <handlers>
-      <type name="QUERY" reply="OK">
+      <type name="QUERY">
         <arg kind="double"/>
         <arg kind="double"/>
         <arg kind="text"/>

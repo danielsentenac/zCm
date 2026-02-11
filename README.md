@@ -125,7 +125,8 @@ Process config at init (required):
   - each `PULL` target pusher port is discovered via `DATA_PORT_PUSH`
 - Optional `<handlers>` adds request reply rules:
   - builtin command behavior is fixed: `PING -> PONG` (default reply `OK`)
-  - repeated `<type name=... reply=...><arg kind=.../>...</type>` with ordered payload args
+  - repeated `<type name=...><arg kind=.../>...</type>` with ordered payload args
+  - TYPE replies are built in handler code and sent as typed messages with name `<REQ_TYPE>_RPL`
   - malformed TYPE requests are rejected with `ERROR` and expected TYPE format
   - `zcm send` preserves the exact order of repeated payload flags
   - payload flags: `-t/-d/-f/-i/-c/-s/-l/-b/-a`

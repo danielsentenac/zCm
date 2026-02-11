@@ -194,7 +194,6 @@ static int load_type_handlers(const char *cfg_path, zcm_proc_runtime_cfg_t *cfg)
 
     char xpath[256];
     char name[64] = {0};
-    char reply[128] = {0};
 
     snprintf(xpath, sizeof(xpath), "string(/procConfig/process/handlers/type[%d]/@name)", i);
     if (run_xmllint_xpath(cfg_path, xpath, name, sizeof(name)) != 0 || !name[0]) {
@@ -202,16 +201,9 @@ static int load_type_handlers(const char *cfg_path, zcm_proc_runtime_cfg_t *cfg)
       return -1;
     }
 
-    snprintf(xpath, sizeof(xpath), "string(/procConfig/process/handlers/type[%d]/@reply)", i);
-    if (run_xmllint_xpath(cfg_path, xpath, reply, sizeof(reply)) != 0 || !reply[0]) {
-      fprintf(stderr, "zcm_proc: handlers/type[%d] missing @reply in %s\n", i, cfg_path);
-      return -1;
-    }
-
     zcm_proc_type_handler_cfg_t *handler = &cfg->type_handlers[cfg->type_handler_count++];
     memset(handler, 0, sizeof(*handler));
     snprintf(handler->name, sizeof(handler->name), "%s", name);
-    snprintf(handler->reply, sizeof(handler->reply), "%s", reply);
 
     snprintf(xpath, sizeof(xpath),
              "string(count(/procConfig/process/handlers/type[%d]/arg))", i);

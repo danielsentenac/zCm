@@ -744,6 +744,186 @@ static int set_payload_value(zcm_msg_t *msg, send_value_kind_t kind, const char 
   }
 }
 
+static uint16_t read_u16_le(const uint8_t *p) {
+  return (uint16_t)p[0] | (uint16_t)((uint16_t)p[1] << 8);
+}
+
+static uint32_t read_u32_le(const uint8_t *p) {
+  return (uint32_t)p[0] |
+         ((uint32_t)p[1] << 8) |
+         ((uint32_t)p[2] << 16) |
+         ((uint32_t)p[3] << 24);
+}
+
+static uint64_t read_u64_le(const uint8_t *p) {
+  return (uint64_t)p[0] |
+         ((uint64_t)p[1] << 8) |
+         ((uint64_t)p[2] << 16) |
+         ((uint64_t)p[3] << 24) |
+         ((uint64_t)p[4] << 32) |
+         ((uint64_t)p[5] << 40) |
+         ((uint64_t)p[6] << 48) |
+         ((uint64_t)p[7] << 56);
+}
+
+static void print_hex_bytes_limited(const uint8_t *p, size_t len, size_t max_show) {
+  size_t n = (len < max_show) ? len : max_show;
+  for (size_t i = 0; i < n; i++) {
+    printf("%02X", p[i]);
+    if (i + 1 < n) printf(" ");
+  }
+  if (len > max_show) printf(" ...");
+}
+
+static const char *array_type_name_from_u8(uint8_t t) {
+  switch (t) {
+    case ZCM_MSG_ARRAY_CHAR: return "char";
+    case ZCM_MSG_ARRAY_SHORT: return "short";
+    case ZCM_MSG_ARRAY_INT: return "int";
+    case ZCM_MSG_ARRAY_FLOAT: return "float";
+    case ZCM_MSG_ARRAY_DOUBLE: return "double";
+    default: return "unknown";
+  }
+}
+
+static int print_reply_payload_generic(const zcm_msg_t *reply) {
+  size_t len = 0;
+  const uint8_t *buf = (const uint8_t *)zcm_msg_data(reply, &len);
+  if (!buf || len == 0) {
+    printf(" payload={}\n");
+    return 0;
+  }
+
+  printf(" payload={");
+  size_t off = 0;
+  int first_item = 1;
+  while (off < len) {
+    if (!first_item) printf(", ");
+    first_item = 0;
+    uint8_t item = buf[off++];
+
+    if (item == ZCM_MSG_ITEM_CHAR) {
+      if (off + 1 > len) goto malformed;
+      char v = (char)buf[off++];
+      printf("char='%c'(%d)", isprint((unsigned char)v) ? v : '?', (int)(unsigned char)v);
+      continue;
+    }
+    if (item == ZCM_MSG_ITEM_SHORT) {
+      if (off + 2 > len) goto malformed;
+      int16_t v = (int16_t)read_u16_le(buf + off);
+      off += 2;
+      printf("short=%d", (int)v);
+      continue;
+    }
+    if (item == ZCM_MSG_ITEM_INT) {
+      if (off + 4 > len) goto malformed;
+      int32_t v = (int32_t)read_u32_le(buf + off);
+      off += 4;
+      printf("int=%d", v);
+      continue;
+    }
+    if (item == ZCM_MSG_ITEM_LONG) {
+      if (off + 8 > len) goto malformed;
+      int64_t v = (int64_t)read_u64_le(buf + off);
+      off += 8;
+      printf("long=%lld", (long long)v);
+      continue;
+    }
+    if (item == ZCM_MSG_ITEM_FLOAT) {
+      if (off + 4 > len) goto malformed;
+      uint32_t bits = read_u32_le(buf + off);
+      off += 4;
+      float v = 0.0f;
+      memcpy(&v, &bits, sizeof(v));
+      printf("float=%f", v);
+      continue;
+    }
+    if (item == ZCM_MSG_ITEM_DOUBLE) {
+      if (off + 8 > len) goto malformed;
+      uint64_t bits = read_u64_le(buf + off);
+      off += 8;
+      double v = 0.0;
+      memcpy(&v, &bits, sizeof(v));
+      printf("double=%f", v);
+      continue;
+    }
+    if (item == ZCM_MSG_ITEM_TEXT) {
+      if (off + 4 > len) goto malformed;
+      uint32_t n = read_u32_le(buf + off);
+      off += 4;
+      if (off + n > len) goto malformed;
+      printf("text=%.*s", (int)n, (const char *)(buf + off));
+      off += n;
+      continue;
+    }
+    if (item == ZCM_MSG_ITEM_BYTES) {
+      if (off + 4 > len) goto malformed;
+      uint32_t n = read_u32_le(buf + off);
+      off += 4;
+      if (off + n > len) goto malformed;
+      printf("bytes[%u]=", n);
+      print_hex_bytes_limited(buf + off, n, 16);
+      off += n;
+      continue;
+    }
+    if (item == ZCM_MSG_ITEM_ARRAY) {
+      if (off + 1 + 4 > len) goto malformed;
+      uint8_t arr_t = buf[off++];
+      uint32_t elems = read_u32_le(buf + off);
+      off += 4;
+      size_t elem_size = 0;
+      switch (arr_t) {
+        case ZCM_MSG_ARRAY_CHAR: elem_size = 1; break;
+        case ZCM_MSG_ARRAY_SHORT: elem_size = 2; break;
+        case ZCM_MSG_ARRAY_INT: elem_size = 4; break;
+        case ZCM_MSG_ARRAY_FLOAT: elem_size = 4; break;
+        case ZCM_MSG_ARRAY_DOUBLE: elem_size = 8; break;
+        default: goto malformed;
+      }
+      size_t total = elem_size * (size_t)elems;
+      if (off + total > len) goto malformed;
+      printf("array<%s>[%u]=", array_type_name_from_u8(arr_t), elems);
+      size_t show = elems < 8 ? elems : 8;
+      printf("[");
+      for (size_t i = 0; i < show; i++) {
+        if (i) printf(",");
+        const uint8_t *q = buf + off + i * elem_size;
+        if (arr_t == ZCM_MSG_ARRAY_CHAR) {
+          char v = (char)q[0];
+          printf("'%c'", isprint((unsigned char)v) ? v : '?');
+        } else if (arr_t == ZCM_MSG_ARRAY_SHORT) {
+          printf("%d", (int)(int16_t)read_u16_le(q));
+        } else if (arr_t == ZCM_MSG_ARRAY_INT) {
+          printf("%d", (int32_t)read_u32_le(q));
+        } else if (arr_t == ZCM_MSG_ARRAY_FLOAT) {
+          uint32_t bits = read_u32_le(q);
+          float v = 0.0f;
+          memcpy(&v, &bits, sizeof(v));
+          printf("%f", v);
+        } else if (arr_t == ZCM_MSG_ARRAY_DOUBLE) {
+          uint64_t bits = read_u64_le(q);
+          double v = 0.0;
+          memcpy(&v, &bits, sizeof(v));
+          printf("%f", v);
+        }
+      }
+      if (elems > show) printf(",...");
+      printf("]");
+      off += total;
+      continue;
+    }
+
+    goto malformed;
+  }
+
+  printf("}\n");
+  return 0;
+
+malformed:
+  printf(" <malformed>}\n");
+  return -1;
+}
+
 static int do_send(const char *endpoint, const char *name, const char *type,
                    const send_value_t *values, size_t value_count) {
   int rc = 1;
@@ -796,43 +976,18 @@ static int do_send(const char *endpoint, const char *name, const char *type,
   const char *text = NULL;
   uint32_t text_len = 0;
   int32_t code = 0;
+  const char *reply_type = zcm_msg_get_type(reply);
+  if (!reply_type) reply_type = "";
+
   zcm_msg_rewind(reply);
   if (zcm_msg_get_text(reply, &text, &text_len) == 0 &&
       zcm_msg_get_int(reply, &code) == 0 &&
       zcm_msg_remaining(reply) == 0) {
     printf("[REQ -> %s] received reply: msgType=%s text=%.*s code=%d\n",
-           name, zcm_msg_get_type(reply), (int)text_len, text, code);
+           name, reply_type, (int)text_len, text, code);
   } else {
-    zcm_msg_rewind(reply);
-    if (zcm_msg_get_text(reply, &text, &text_len) == 0 &&
-        zcm_msg_remaining(reply) == 0) {
-      printf("[REQ -> %s] received reply: msgType=%s text=%.*s\n",
-             name, zcm_msg_get_type(reply), (int)text_len, text);
-    } else {
-      double d = 0.0;
-      float f = 0.0f;
-      int32_t i = 0;
-      zcm_msg_rewind(reply);
-      if (zcm_msg_get_double(reply, &d) == 0 && zcm_msg_remaining(reply) == 0) {
-        printf("[REQ -> %s] received reply: msgType=%s double=%f\n",
-               name, zcm_msg_get_type(reply), d);
-      } else {
-        zcm_msg_rewind(reply);
-        if (zcm_msg_get_float(reply, &f) == 0 && zcm_msg_remaining(reply) == 0) {
-          printf("[REQ -> %s] received reply: msgType=%s float=%f\n",
-                 name, zcm_msg_get_type(reply), f);
-        } else {
-          zcm_msg_rewind(reply);
-          if (zcm_msg_get_int(reply, &i) == 0 && zcm_msg_remaining(reply) == 0) {
-            printf("[REQ -> %s] received reply: msgType=%s int=%d\n",
-                   name, zcm_msg_get_type(reply), i);
-          } else {
-            printf("[REQ -> %s] received reply: msgType=%s\n",
-                   name, zcm_msg_get_type(reply));
-          }
-        }
-      }
-    }
+    printf("[REQ -> %s] received reply: msgType=%s", name, reply_type);
+    (void)print_reply_payload_generic(reply);
   }
 
   rc = 0;

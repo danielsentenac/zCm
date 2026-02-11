@@ -19,7 +19,7 @@
       </xs:element>
     </xs:sequence>
     <xs:attribute name="name" type="xs:string" use="required"/>
-    <xs:attribute name="reply" type="xs:string" use="required"/>
+    <xs:attribute name="reply" type="xs:string" use="optional"/>
   </xs:complexType>
   <xs:element name="procConfig">
     <xs:complexType>

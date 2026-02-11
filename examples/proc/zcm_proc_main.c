@@ -4,6 +4,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 
@@ -38,6 +39,70 @@ static void app_on_req_message(const char *self_name, zcm_msg_t *req, void *user
   (void)user;
 }
 
+static int build_type_reply_name(const char *req_type, char *out, size_t out_size) {
+  if (!req_type || !*req_type || !out || out_size == 0) return -1;
+  int n = snprintf(out, out_size, "%s_RPL", req_type);
+  if (n < 0 || (size_t)n >= out_size) return -1;
+  return 0;
+}
+
+/*
+ * User hook: build typed reply payload for one validated TYPE request.
+ * Default behavior here is "echo payload" and reply type "<REQ_TYPE>_RPL".
+ */
+static int app_on_type_request(const char *self_name,
+                               const char *req_type,
+                               const zcm_proc_type_handler_cfg_t *handler,
+                               zcm_msg_t *req,
+                               zcm_msg_t *reply,
+                               void *user) {
+  (void)self_name;
+  (void)user;
+  if (!req_type || !handler || !req || !reply) return -1;
+
+  char reply_type[96] = {0};
+  if (build_type_reply_name(req_type, reply_type, sizeof(reply_type)) != 0) return -1;
+  zcm_msg_set_type(reply, reply_type);
+
+  zcm_msg_rewind(req);
+  for (size_t i = 0; i < handler->arg_count; i++) {
+    if (handler->args[i] == ZCM_PROC_TYPE_ARG_TEXT) {
+      const char *text = NULL;
+      uint32_t len = 0;
+      if (zcm_msg_get_text(req, &text, &len) != 0) return -1;
+      char *tmp = (char *)malloc((size_t)len + 1);
+      if (!tmp) return -1;
+      memcpy(tmp, text, len);
+      tmp[len] = '\0';
+      int rc = zcm_msg_put_text(reply, tmp);
+      free(tmp);
+      if (rc != 0) return -1;
+      continue;
+    }
+    if (handler->args[i] == ZCM_PROC_TYPE_ARG_DOUBLE) {
+      double v = 0.0;
+      if (zcm_msg_get_double(req, &v) != 0) return -1;
+      if (zcm_msg_put_double(reply, v) != 0) return -1;
+      continue;
+    }
+    if (handler->args[i] == ZCM_PROC_TYPE_ARG_FLOAT) {
+      float v = 0.0f;
+      if (zcm_msg_get_float(req, &v) != 0) return -1;
+      if (zcm_msg_put_float(reply, v) != 0) return -1;
+      continue;
+    }
+    if (handler->args[i] == ZCM_PROC_TYPE_ARG_INT) {
+      int32_t v = 0;
+      if (zcm_msg_get_int(req, &v) != 0) return -1;
+      if (zcm_msg_put_int(reply, v) != 0) return -1;
+      continue;
+    }
+    return -1;
+  }
+
+  return (zcm_msg_remaining(req) == 0) ? 0 : -1;
+}
+
 static int run_daemon(const char *cfg_path) {
   zcm_proc_runtime_cfg_t cfg;
   zcm_proc_t *proc = NULL;
@@ -68,8 +133,9 @@ static int run_daemon(const char *cfg_path) {
     app_on_req_message(cfg.name, req, NULL);
     zcm_msg_rewind(req);
 
-    int32_t req_code = 200;
     int malformed = 0;
+    int typed_reply_ready = 0;
+    int32_t req_code = 200;
     const char *cmd = NULL;
     uint32_t cmd_len = 0;
     const char *req_type = zcm_msg_get_type(req);
@@ -77,6 +143,12 @@ static int run_daemon(const char *cfg_path) {
     char dynamic_reply[64] = {0};
     char parsed_summary[512] = {0};
     const char *reply_text = zcm_proc_runtime_builtin_reply_for_command(NULL, 0);
+    zcm_msg_t *reply = zcm_msg_new();
+    if (!reply) {
+      zcm_msg_free(req);
+      zcm_proc_free(proc);
+      return 1;
+    }
 
     if (!req_type) req_type = "";
 
@@ -93,9 +165,18 @@ static int run_daemon(const char *cfg_path) {
         printf("[REP %s] received malformed request: msgType=%s expected=%s\n",
                cfg.name, req_type, handler->format);
       } else {
-        reply_text = handler->reply;
         printf("[REP %s] received request: msgType=%s payload={%s}\n",
                cfg.name, req_type, parsed_summary[0] ? parsed_summary : "<no-args>");
+        zcm_msg_rewind(req);
+        if (app_on_type_request(cfg.name, req_type, handler, req, reply, NULL) != 0) {
+          malformed = 1;
+          req_code = 500;
+          snprintf(err_text, sizeof(err_text),
+                   "ERR handler reply build failed for type %s", req_type);
+          reply_text = err_text;
+        } else {
+          typed_reply_ready = 1;
+        }
       }
     } else {
       zcm_msg_rewind(req);
@@ -188,15 +269,12 @@ static int run_daemon(const char *cfg_path) {
       }
     }
 
-    zcm_msg_t *reply = zcm_msg_new();
-    if (!reply) {
-      zcm_msg_free(req);
-      zcm_proc_free(proc);
-      return 1;
+    if (!typed_reply_ready || malformed) {
+      zcm_msg_reset(reply);
+      zcm_msg_set_type(reply, malformed ? "ERROR" : "REPLY");
+      zcm_msg_put_text(reply, reply_text);
+      zcm_msg_put_int(reply, req_code);
     }
-    zcm_msg_set_type(reply, malformed ? "ERROR" : "REPLY");
-    zcm_msg_put_text(reply, reply_text);
-    zcm_msg_put_int(reply, req_code);
     if (zcm_socket_send_msg(rep, reply) != 0) {
       fprintf(stderr, "reply send failed\n");
       zcm_msg_free(reply);
@@ -204,8 +282,13 @@ static int run_daemon(const char *cfg_path) {
       zcm_proc_free(proc);
       return 1;
     }
-    printf("[REP %s] sent reply: msgType=%s text=%s code=%d\n",
-           cfg.name, malformed ? "ERROR" : "REPLY", reply_text, req_code);
+    if (typed_reply_ready && !malformed) {
+      printf("[REP %s] sent typed reply: msgType=%s\n",
+             cfg.name, zcm_msg_get_type(reply));
+    } else {
+      printf("[REP %s] sent reply: msgType=%s text=%s code=%d\n",
+             cfg.name, malformed ? "ERROR" : "REPLY", reply_text, req_code);
+    }
     fflush(stdout);
     zcm_msg_free(reply);
     zcm_msg_free(req);
