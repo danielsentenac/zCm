@@ -24,6 +24,19 @@ typedef struct cmd_result {
   char *output;
 } cmd_result_t;
 
+static int g_step_no = 1;
+
+static void step_log(const char *fmt, ...) {
+  if (!fmt) return;
+  printf("zcm_cli_workflow: step %d: ", g_step_no++);
+  va_list ap;
+  va_start(ap, fmt);
+  vprintf(fmt, ap);
+  va_end(ap);
+  printf("\n");
+  fflush(stdout);
+}
+
 static int append_buf(char **dst, size_t *len, size_t *cap, const char *src, size_t n) {
   if (!dst || !len || !cap || (!src && n > 0)) return -1;
   size_t need = *len + n + 1;
@@ -496,7 +509,7 @@ int main(void) {
   pid_t subscriber_pid = -1;
   pid_t publisher2_pid = -1;
 
-  printf("zcm_cli_workflow: start broker\n");
+  step_log("start broker");
   {
     const char *argv[] = {broker_path, NULL};
     if (start_daemon_argv(argv, broker_log, &broker_pid) != 0) {
@@ -513,7 +526,7 @@ int main(void) {
     }
   }
 
-  printf("zcm_cli_workflow: start publisher/basic/subscriber\n");
+  step_log("start publisher/basic/subscriber");
   {
     const char *argv[] = {proc_path, publisher_cfg, NULL};
     if (start_daemon_argv(argv, publisher_log, &publisher_pid) != 0) goto done;
@@ -538,7 +551,7 @@ int main(void) {
     goto done;
   }
 
-  printf("zcm_cli_workflow: send QUERY to basic and expect QUERY_RPL\n");
+  step_log("send QUERY to basic and expect QUERY_RPL");
   {
     const char *argv[] = {
       zcm_path, "send", "basic", "-type", "QUERY",
@@ -556,7 +569,7 @@ int main(void) {
     free(r.output);
   }
 
-  printf("zcm_cli_workflow: kill publisher and verify it disappears from names\n");
+  step_log("kill publisher and verify it disappears from names");
   {
     const char *argv[] = {zcm_path, "kill", "publisher", NULL};
     cmd_result_t r;
@@ -574,7 +587,7 @@ int main(void) {
   }
   stop_pid(&publisher_pid);
 
-  printf("zcm_cli_workflow: stop broker then verify names has offline output\n");
+  step_log("stop broker then verify names has offline output");
   {
     const char *argv[] = {zcm_path, "broker", "stop", NULL};
     cmd_result_t r;
@@ -601,7 +614,7 @@ int main(void) {
     free(r.output);
   }
 
-  printf("zcm_cli_workflow: restart broker, relaunch publisher, verify recovered workflow\n");
+  step_log("restart broker, relaunch publisher, verify recovered workflow");
   {
     const char *argv[] = {broker_path, NULL};
     if (start_daemon_argv(argv, broker_log, &broker_pid) != 0) goto done;
@@ -647,7 +660,7 @@ int main(void) {
     free(r.output);
   }
 
-  printf("zcm_cli_workflow: PASS\n");
+  step_log("PASS");
   rc = 0;
 
 done:
