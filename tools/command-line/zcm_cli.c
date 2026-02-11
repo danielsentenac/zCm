@@ -341,6 +341,50 @@ static void print_repeat_char(char ch, size_t n) {
   for (size_t i = 0; i < n; i++) putchar(ch);
 }
 
+static void print_names_broker_offline(const char *endpoint) {
+  const char *name = "zcmbroker";
+  const char *ep = (endpoint && *endpoint) ? endpoint : "-";
+  const char *role = "BROKER_OFFLINE";
+  const char *pub_port = "-";
+  const char *push_port = "-";
+
+  size_t w_name = strlen("NAME");
+  size_t w_endpoint = strlen("ENDPOINT");
+  size_t w_role = strlen("ROLE");
+  size_t w_pub_port = strlen("PUB_PORT");
+  size_t w_push_port = strlen("PUSH_PORT");
+
+  if (strlen(name) > w_name) w_name = strlen(name);
+  if (strlen(ep) > w_endpoint) w_endpoint = strlen(ep);
+  if (strlen(role) > w_role) w_role = strlen(role);
+  if (strlen(pub_port) > w_pub_port) w_pub_port = strlen(pub_port);
+  if (strlen(push_port) > w_push_port) w_push_port = strlen(push_port);
+
+  printf("%-*s  %-*s  %-*s  %-*s  %-*s\n",
+         (int)w_name, "NAME",
+         (int)w_endpoint, "ENDPOINT",
+         (int)w_role, "ROLE",
+         (int)w_pub_port, "PUB_PORT",
+         (int)w_push_port, "PUSH_PORT");
+  print_repeat_char('-', w_name);
+  printf("  ");
+  print_repeat_char('-', w_endpoint);
+  printf("  ");
+  print_repeat_char('-', w_role);
+  printf("  ");
+  print_repeat_char('-', w_pub_port);
+  printf("  ");
+  print_repeat_char('-', w_push_port);
+  printf("\n");
+
+  printf("%-*s  %-*s  %-*s  %-*s  %-*s\n",
+         (int)w_name, name,
+         (int)w_endpoint, ep,
+         (int)w_role, role,
+         (int)w_pub_port, pub_port,
+         (int)w_push_port, push_port);
+}
+
 static int do_names(const char *endpoint) {
   int rc = 1;
   zcm_context_t *ctx = zcm_context_new();
@@ -454,7 +498,14 @@ static int do_names_with_timeout(const char *endpoint, int timeout_ms) {
   while (waited < timeout_ms) {
     pid_t r = waitpid(pid, &status, WNOHANG);
     if (r == pid) {
-      if (WIFEXITED(status)) return WEXITSTATUS(status);
+      if (WIFEXITED(status)) {
+        int rc = WEXITSTATUS(status);
+        if (rc != 0) {
+          print_names_broker_offline(endpoint);
+          fprintf(stderr, "zcm: broker not reachable\n");
+        }
+        return rc;
+      }
       return 1;
     }
     usleep(100 * 1000);
@@ -463,6 +514,7 @@ static int do_names_with_timeout(const char *endpoint, int timeout_ms) {
 
   kill(pid, SIGKILL);
   waitpid(pid, &status, 0);
+  print_names_broker_offline(endpoint);
   fprintf(stderr, "zcm: broker not reachable\n");
   return 1;
 }
