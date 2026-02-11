@@ -116,6 +116,17 @@ if(ZCM_BUILD_TESTS)
   set_target_properties(zcm_proc_reannounce PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${ZCM_TEST_OUTPUT_DIR}
   )
+
+  add_executable(zcm_cli_workflow tests/node/zcm_cli_workflow.c)
+  target_link_libraries(zcm_cli_workflow PRIVATE zcm_lib)
+  target_compile_definitions(zcm_cli_workflow
+    PRIVATE
+      ZCM_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+  )
+  add_test(NAME zcm_cli_workflow COMMAND zcm_cli_workflow)
+  set_target_properties(zcm_cli_workflow PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${ZCM_TEST_OUTPUT_DIR}
+  )
 endif()
 
 if(ZCM_BUILD_EXAMPLES)
