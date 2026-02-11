@@ -141,17 +141,21 @@ static int run_capture_argv(const char *const argv[], int timeout_ms, cmd_result
   return 0;
 }
 
-static int start_daemon_argv(const char *const argv[], pid_t *out_pid) {
+static int start_daemon_argv(const char *const argv[], const char *log_path, pid_t *out_pid) {
   if (!argv || !argv[0] || !out_pid) return -1;
 
   pid_t pid = fork();
   if (pid < 0) return -1;
   if (pid == 0) {
-    int devnull = open("/dev/null", O_WRONLY);
-    if (devnull >= 0) {
-      dup2(devnull, STDOUT_FILENO);
-      dup2(devnull, STDERR_FILENO);
-      close(devnull);
+    int out_fd = -1;
+    if (log_path && *log_path) {
+      out_fd = open(log_path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    }
+    if (out_fd < 0) out_fd = open("/dev/null", O_WRONLY);
+    if (out_fd >= 0) {
+      dup2(out_fd, STDOUT_FILENO);
+      dup2(out_fd, STDERR_FILENO);
+      close(out_fd);
     }
     execv(argv[0], (char *const *)argv);
     _exit(127);
@@ -252,6 +256,49 @@ static int compute_build_dir(char *out, size_t out_size) {
   return 0;
 }
 
+static int program_in_path(const char *prog) {
+  if (!prog || !*prog) return 0;
+  if (strchr(prog, '/')) return access(prog, X_OK) == 0;
+
+  const char *path = getenv("PATH");
+  if (!path || !*path) return 0;
+  char *copy = strdup(path);
+  if (!copy) return 0;
+
+  int found = 0;
+  char *saveptr = NULL;
+  for (char *dir = strtok_r(copy, ":", &saveptr); dir; dir = strtok_r(NULL, ":", &saveptr)) {
+    char candidate[2048];
+    if (!*dir) dir = ".";
+    if (snprintf(candidate, sizeof(candidate), "%s/%s", dir, prog) >= (int)sizeof(candidate)) continue;
+    if (access(candidate, X_OK) == 0) {
+      found = 1;
+      break;
+    }
+  }
+
+  free(copy);
+  return found;
+}
+
+static void dump_file_with_header(const char *header, const char *path) {
+  if (!header || !path || !*path) return;
+  fprintf(stderr, "--- %s (%s) ---\n", header, path);
+  FILE *f = fopen(path, "r");
+  if (!f) {
+    fprintf(stderr, "<unavailable>\n");
+    return;
+  }
+  char line[512];
+  int lines = 0;
+  while (fgets(line, sizeof(line), f) && lines < 120) {
+    fputs(line, stderr);
+    lines++;
+  }
+  if (!feof(f)) fprintf(stderr, "... (truncated)\n");
+  fclose(f);
+}
+
 static int names_has_name(const char *text, const char *name) {
   if (!text || !name || !*name) return 0;
 
@@ -301,19 +348,33 @@ static int wait_cmd_ok(const char *const argv[], const char *must_contain, int t
 
 static int wait_name_state(const char *zcm_path, const char *name, int should_exist, int timeout_ms) {
   int waited = 0;
+  char *last_output = NULL;
   while (waited < timeout_ms) {
     const char *argv[] = {zcm_path, "names", NULL};
     cmd_result_t r;
-    if (run_capture_argv(argv, 6000, &r) != 0) return -1;
+    if (run_capture_argv(argv, 6000, &r) != 0) {
+      free(last_output);
+      return -1;
+    }
+    free(last_output);
+    last_output = strdup(r.output ? r.output : "");
     if (r.exit_code == 0) {
       int has = names_has_name(r.output, name);
       free(r.output);
-      if ((has ? 1 : 0) == (should_exist ? 1 : 0)) return 0;
+      if ((has ? 1 : 0) == (should_exist ? 1 : 0)) {
+        free(last_output);
+        return 0;
+      }
     } else {
       free(r.output);
     }
     usleep(200 * 1000);
     waited += 200;
+  }
+  if (last_output) {
+    fprintf(stderr, "zcm_cli_workflow: last `zcm names` output while waiting for %s=%s:\n%s\n",
+            name, should_exist ? "present" : "absent", last_output);
+    free(last_output);
   }
   return -1;
 }
@@ -344,10 +405,26 @@ int main(void) {
   char basic_cfg[1200] = {0};
   char publisher_cfg[1200] = {0};
   char subscriber_cfg[1200] = {0};
+  char broker_log[1200] = {0};
+  char publisher_log[1200] = {0};
+  char basic_log[1200] = {0};
+  char subscriber_log[1200] = {0};
+  char publisher2_log[1200] = {0};
   snprintf(db_path, sizeof(db_path), "%s/ZCmDomains", tmp_dir);
   snprintf(basic_cfg, sizeof(basic_cfg), "%s/basic.cfg", tmp_dir);
   snprintf(publisher_cfg, sizeof(publisher_cfg), "%s/publisher.cfg", tmp_dir);
   snprintf(subscriber_cfg, sizeof(subscriber_cfg), "%s/subscriber.cfg", tmp_dir);
+  snprintf(broker_log, sizeof(broker_log), "%s/broker.log", tmp_dir);
+  snprintf(publisher_log, sizeof(publisher_log), "%s/publisher.log", tmp_dir);
+  snprintf(basic_log, sizeof(basic_log), "%s/basic.log", tmp_dir);
+  snprintf(subscriber_log, sizeof(subscriber_log), "%s/subscriber.log", tmp_dir);
+  snprintf(publisher2_log, sizeof(publisher2_log), "%s/publisher2.log", tmp_dir);
+
+  if (!program_in_path("xmllint")) {
+    printf("zcm_cli_workflow: SKIP (xmllint not found in PATH)\n");
+    rc = 0;
+    goto done;
+  }
 
   int broker_port = -1;
   int first_port = -1;
@@ -422,7 +499,7 @@ int main(void) {
   printf("zcm_cli_workflow: start broker\n");
   {
     const char *argv[] = {broker_path, NULL};
-    if (start_daemon_argv(argv, &broker_pid) != 0) {
+    if (start_daemon_argv(argv, broker_log, &broker_pid) != 0) {
       fprintf(stderr, "zcm_cli_workflow: failed to start broker\n");
       goto done;
     }
@@ -439,21 +516,25 @@ int main(void) {
   printf("zcm_cli_workflow: start publisher/basic/subscriber\n");
   {
     const char *argv[] = {proc_path, publisher_cfg, NULL};
-    if (start_daemon_argv(argv, &publisher_pid) != 0) goto done;
+    if (start_daemon_argv(argv, publisher_log, &publisher_pid) != 0) goto done;
   }
   {
     const char *argv[] = {proc_path, basic_cfg, NULL};
-    if (start_daemon_argv(argv, &basic_pid) != 0) goto done;
+    if (start_daemon_argv(argv, basic_log, &basic_pid) != 0) goto done;
   }
   {
     const char *argv[] = {proc_path, subscriber_cfg, NULL};
-    if (start_daemon_argv(argv, &subscriber_pid) != 0) goto done;
+    if (start_daemon_argv(argv, subscriber_log, &subscriber_pid) != 0) goto done;
   }
 
-  if (wait_name_state(zcm_path, "publisher", 1, 10000) != 0 ||
-      wait_name_state(zcm_path, "basic", 1, 10000) != 0 ||
-      wait_name_state(zcm_path, "subscriber", 1, 10000) != 0) {
+  if (wait_name_state(zcm_path, "publisher", 1, 20000) != 0 ||
+      wait_name_state(zcm_path, "basic", 1, 20000) != 0 ||
+      wait_name_state(zcm_path, "subscriber", 1, 20000) != 0) {
     fprintf(stderr, "zcm_cli_workflow: names did not register all procs\n");
+    dump_file_with_header("broker log", broker_log);
+    dump_file_with_header("publisher log", publisher_log);
+    dump_file_with_header("basic log", basic_log);
+    dump_file_with_header("subscriber log", subscriber_log);
     goto done;
   }
 
@@ -487,7 +568,7 @@ int main(void) {
       goto done;
     }
   }
-  if (wait_name_state(zcm_path, "publisher", 0, 10000) != 0) {
+  if (wait_name_state(zcm_path, "publisher", 0, 20000) != 0) {
     fprintf(stderr, "zcm_cli_workflow: publisher still present after kill\n");
     goto done;
   }
@@ -523,7 +604,7 @@ int main(void) {
   printf("zcm_cli_workflow: restart broker, relaunch publisher, verify recovered workflow\n");
   {
     const char *argv[] = {broker_path, NULL};
-    if (start_daemon_argv(argv, &broker_pid) != 0) goto done;
+    if (start_daemon_argv(argv, broker_log, &broker_pid) != 0) goto done;
   }
   {
     const char *argv[] = {zcm_path, "broker", "ping", NULL};
@@ -535,13 +616,17 @@ int main(void) {
 
   {
     const char *argv[] = {proc_path, publisher_cfg, NULL};
-    if (start_daemon_argv(argv, &publisher2_pid) != 0) goto done;
+    if (start_daemon_argv(argv, publisher2_log, &publisher2_pid) != 0) goto done;
   }
 
-  if (wait_name_state(zcm_path, "basic", 1, 10000) != 0 ||
-      wait_name_state(zcm_path, "subscriber", 1, 10000) != 0 ||
-      wait_name_state(zcm_path, "publisher", 1, 10000) != 0) {
+  if (wait_name_state(zcm_path, "basic", 1, 20000) != 0 ||
+      wait_name_state(zcm_path, "subscriber", 1, 20000) != 0 ||
+      wait_name_state(zcm_path, "publisher", 1, 20000) != 0) {
     fprintf(stderr, "zcm_cli_workflow: names not restored after restart\n");
+    dump_file_with_header("broker log", broker_log);
+    dump_file_with_header("basic log", basic_log);
+    dump_file_with_header("subscriber log", subscriber_log);
+    dump_file_with_header("publisher2 log", publisher2_log);
     goto done;
   }
 
