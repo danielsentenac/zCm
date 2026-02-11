@@ -189,9 +189,6 @@ Generic data-path sample procs:
 ./build/examples/zcm_proc data/puller.cfg
 ```
 
-## Tests
-See `docs/tests.md` for test coverage and intent.
-
 ## Status
 Scaffolded with a working broker/registry + typed message envelope.
 See `docs/zcm-proc.md`, `docs/zcm-msg.md`, and `docs/tests.md`.
