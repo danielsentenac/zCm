@@ -489,6 +489,7 @@ static int do_names_with_timeout(const char *endpoint, int timeout_ms) {
   pid_t pid = fork();
   if (pid == 0) {
     int rc = do_names(endpoint);
+    fflush(NULL);
     _exit(rc);
   }
   if (pid < 0) return 1;
