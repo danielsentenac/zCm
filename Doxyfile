@@ -50,6 +50,7 @@ REFERENCES_RELATION    = YES
 GENERATE_HTML          = YES
 HTML_OUTPUT            = html
 HTML_FILE_EXTENSION    = .html
+LAYOUT_FILE            = docs/doxygen/layout.xml
 HTML_EXTRA_STYLESHEET  = docs/theme/doxygen-awesome.css \
                          docs/theme/doxygen-awesome-sidebar-only.css \
                          docs/theme/zcm-dark.css

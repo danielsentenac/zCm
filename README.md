@@ -52,14 +52,6 @@ Verbose tests:
 cmake --build build --target test_results
 ```
 
-## Documentation
-Published docs: https://danielsentenac.github.io/zCm/
-Local docs:
-- `docs/modules.md` for High-Level vs Low-Level API modules.
-- `docs/zcm-proc.md` for unified process example modes.
-- `docs/zcm-msg.md` for message encoding format.
-- `docs/tests.md` for test coverage.
-
 ## Tools
 List registered processes:
 ```bash
@@ -189,9 +181,3 @@ Generic data-path sample procs:
 ./build/examples/zcm_proc data/pusher.cfg
 ./build/examples/zcm_proc data/puller.cfg
 ```
-
-## Status
-Scaffolded with a working broker/registry + typed message envelope.
-- [Process guide (`zcm_proc`)](docs/zcm-proc.md)
-- [Message format (`zcm_msg`)](docs/zcm-msg.md)
-- [Test suite and execution](docs/tests.md)
