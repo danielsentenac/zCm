@@ -15,6 +15,10 @@ extern "C" {
 
 #include "zcm_proc.h"
 
+/** @addtogroup zcm_high_level
+ * @{
+ */
+
 #define ZCM_PROC_TYPE_HANDLER_MAX 32
 #define ZCM_PROC_TYPE_HANDLER_ARG_MAX 32
 #define ZCM_PROC_DATA_SOCKET_MAX 16
@@ -170,6 +174,8 @@ void zcm_proc_runtime_start_data_workers(zcm_proc_runtime_cfg_t *cfg,
                                          zcm_proc_t *proc,
                                          zcm_proc_runtime_sub_payload_cb_t on_sub_payload,
                                          void *user);
+
+/** @} */
 
 #ifdef __cplusplus
 }

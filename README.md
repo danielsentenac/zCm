@@ -55,6 +55,7 @@ cmake --build build --target test_results
 ## Documentation
 Published docs: https://danielsentenac.github.io/zCm/
 Local docs:
+- `docs/modules.md` for High-Level vs Low-Level API modules.
 - `docs/zcm-proc.md` for unified process example modes.
 - `docs/zcm-msg.md` for message encoding format.
 - `docs/tests.md` for test coverage.

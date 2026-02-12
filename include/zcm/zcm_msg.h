@@ -13,6 +13,10 @@ extern "C" {
 #include <stddef.h>
 #include <stdint.h>
 
+/** @addtogroup zcm_low_level
+ * @{
+ */
+
 /** @brief Opaque typed message container. */
 typedef struct zcm_msg zcm_msg_t;
 
@@ -392,6 +396,8 @@ int zcm_msg_validate(const zcm_msg_t *msg);
  * @return Internal error string, or `NULL` when `msg` is `NULL`.
  */
 const char *zcm_msg_last_error(const zcm_msg_t *msg);
+
+/** @} */
 
 #ifdef __cplusplus
 }

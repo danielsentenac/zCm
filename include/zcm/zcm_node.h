@@ -16,6 +16,10 @@ extern "C" {
 
 struct zcm_context;
 
+/** @addtogroup zcm_low_level
+ * @{
+ */
+
 /** @brief Opaque broker-registry client handle. */
 typedef struct zcm_node zcm_node_t;
 
@@ -241,6 +245,8 @@ int zcm_socket_recv_bytes(zcm_socket_t *sock, void *buf, size_t buf_len, size_t 
  * @return `0` on success, `-1` on failure.
  */
 int zcm_socket_set_timeouts(zcm_socket_t *sock, int ms);
+
+/** @} */
 
 #ifdef __cplusplus
 }

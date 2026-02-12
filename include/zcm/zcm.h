@@ -12,6 +12,10 @@ extern "C" {
 
 #include <stddef.h>
 
+/** @addtogroup zcm_low_level
+ * @{
+ */
+
 /** @brief Success return code. */
 #define ZCM_OK 0
 /** @brief Generic failure return code. */
@@ -76,6 +80,8 @@ const char *zcm_version_string(void);
  * @return Native ZeroMQ context pointer, or `NULL` when `ctx` is `NULL`.
  */
 void *zcm_context_zmq(zcm_context_t *ctx);
+
+/** @} */
 
 #ifdef __cplusplus
 } /* extern "C" */

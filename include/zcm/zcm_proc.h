@@ -13,6 +13,10 @@ extern "C" {
 #include "zcm.h"
 #include "zcm_node.h"
 
+/** @addtogroup zcm_high_level
+ * @{
+ */
+
 /** @brief Opaque process helper handle. */
 typedef struct zcm_proc zcm_proc_t;
 
@@ -51,6 +55,8 @@ zcm_context_t *zcm_proc_context(zcm_proc_t *proc);
  * @return Node pointer, or `NULL` when `proc` is `NULL`.
  */
 zcm_node_t *zcm_proc_node(zcm_proc_t *proc);
+
+/** @} */
 
 #ifdef __cplusplus
 }
