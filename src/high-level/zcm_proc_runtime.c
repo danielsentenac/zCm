@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,6 +20,18 @@
 static const char *k_builtin_ping_request = "PING";
 static const char *k_builtin_ping_reply = "PONG";
 static const char *k_builtin_default_reply = "OK";
+
+static atomic_int g_payload_bytes_pub = ATOMIC_VAR_INIT(-1);
+static atomic_int g_payload_bytes_sub = ATOMIC_VAR_INIT(-1);
+static atomic_int g_payload_bytes_push = ATOMIC_VAR_INIT(-1);
+static atomic_int g_payload_bytes_pull = ATOMIC_VAR_INIT(-1);
+
+static void payload_metrics_reset(void) {
+  atomic_store(&g_payload_bytes_pub, -1);
+  atomic_store(&g_payload_bytes_sub, -1);
+  atomic_store(&g_payload_bytes_push, -1);
+  atomic_store(&g_payload_bytes_pull, -1);
+}
 
 static int text_equals_nocase(const char *text, uint32_t len, const char *lit) {
   if (!text || !lit) return 0;
@@ -735,6 +748,64 @@ int zcm_proc_runtime_first_push_port(const zcm_proc_runtime_cfg_t *cfg, int *out
   return -1;
 }
 
+static void payload_metrics_record_config(const zcm_proc_data_socket_cfg_t *sock) {
+  if (!sock) return;
+  switch (sock->kind) {
+    case ZCM_PROC_DATA_SOCKET_PUB:
+      if (atomic_load(&g_payload_bytes_pub) < 0) {
+        atomic_store(&g_payload_bytes_pub, (int)strlen(sock->payload));
+      }
+      break;
+    case ZCM_PROC_DATA_SOCKET_PUSH:
+      if (atomic_load(&g_payload_bytes_push) < 0) {
+        atomic_store(&g_payload_bytes_push, (int)strlen(sock->payload));
+      }
+      break;
+    case ZCM_PROC_DATA_SOCKET_SUB:
+      if (atomic_load(&g_payload_bytes_sub) < 0) {
+        atomic_store(&g_payload_bytes_sub, 0);
+      }
+      break;
+    case ZCM_PROC_DATA_SOCKET_PULL:
+      if (atomic_load(&g_payload_bytes_pull) < 0) {
+        atomic_store(&g_payload_bytes_pull, 0);
+      }
+      break;
+    default:
+      break;
+  }
+}
+
+int zcm_proc_runtime_payload_bytes(const zcm_proc_runtime_cfg_t *cfg,
+                                   zcm_proc_data_socket_kind_t kind,
+                                   int *out_bytes) {
+  if (!cfg || !out_bytes) return -1;
+
+  const zcm_proc_data_socket_cfg_t *first = NULL;
+  for (size_t i = 0; i < cfg->data_socket_count; i++) {
+    if (cfg->data_sockets[i].kind == kind) {
+      first = &cfg->data_sockets[i];
+      break;
+    }
+  }
+  if (!first) return -1;
+
+  switch (kind) {
+    case ZCM_PROC_DATA_SOCKET_PUB:
+    case ZCM_PROC_DATA_SOCKET_PUSH:
+      *out_bytes = (int)strlen(first->payload);
+      return 0;
+    case ZCM_PROC_DATA_SOCKET_SUB:
+      *out_bytes = atomic_load(&g_payload_bytes_sub);
+      return 0;
+    case ZCM_PROC_DATA_SOCKET_PULL:
+      *out_bytes = atomic_load(&g_payload_bytes_pull);
+      return 0;
+    default:
+      return -1;
+  }
+}
+
 typedef struct data_socket_worker_ctx {
   zcm_proc_t *proc;
   char proc_name[128];
@@ -1003,6 +1074,11 @@ static void *rx_worker_main(void *arg) {
     char buf[512] = {0};
     size_t n = 0;
     if (zcm_socket_recv_bytes(rx, buf, sizeof(buf) - 1, &n) == 0) {
+      if (ctx->sock.kind == ZCM_PROC_DATA_SOCKET_SUB) {
+        atomic_store(&g_payload_bytes_sub, (int)n);
+      } else if (ctx->sock.kind == ZCM_PROC_DATA_SOCKET_PULL) {
+        atomic_store(&g_payload_bytes_pull, (int)n);
+      }
       buf[n] = '\0';
       if (ctx->on_sub_payload) {
         ctx->on_sub_payload(ctx->proc_name, ctx->sock.target, buf, n, ctx->user);
@@ -1023,7 +1099,10 @@ void zcm_proc_runtime_start_data_workers(zcm_proc_runtime_cfg_t *cfg,
                                          zcm_proc_runtime_sub_payload_cb_t on_sub_payload,
                                          void *user) {
   if (!cfg || !proc) return;
+  payload_metrics_reset();
   for (size_t i = 0; i < cfg->data_socket_count; i++) {
+    payload_metrics_record_config(&cfg->data_sockets[i]);
+
     data_socket_worker_ctx_t *ctx = (data_socket_worker_ctx_t *)calloc(1, sizeof(*ctx));
     if (!ctx) continue;
     ctx->proc = proc;

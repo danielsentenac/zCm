@@ -339,6 +339,14 @@ static int names_has_name(const char *text, const char *name) {
   return found;
 }
 
+static int names_has_payload_columns(const char *text) {
+  if (!text) return 0;
+  return (strstr(text, "PUB_BYTES") != NULL &&
+          strstr(text, "SUB_BYTES") != NULL &&
+          strstr(text, "PUSH_BYTES") != NULL &&
+          strstr(text, "PULL_BYTES") != NULL);
+}
+
 static int wait_cmd_ok(const char *const argv[], const char *must_contain, int timeout_ms) {
   int waited = 0;
   while (waited < timeout_ms) {
@@ -549,6 +557,19 @@ int main(void) {
     dump_file_with_header("basic log", basic_log);
     dump_file_with_header("subscriber log", subscriber_log);
     goto done;
+  }
+
+  {
+    const char *argv[] = {zcm_path, "names", NULL};
+    cmd_result_t r;
+    if (run_capture_argv(argv, 6000, &r) != 0) goto done;
+    int ok = (r.exit_code == 0 && names_has_payload_columns(r.output));
+    if (!ok) {
+      fprintf(stderr, "zcm_cli_workflow: names header missing payload columns:\n%s\n", r.output);
+      free(r.output);
+      goto done;
+    }
+    free(r.output);
   }
 
   step_log("send QUERY to basic and expect QUERY_RPL");

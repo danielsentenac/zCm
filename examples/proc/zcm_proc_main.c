@@ -263,6 +263,50 @@ static int run_daemon(const char *cfg_path) {
             snprintf(err_text, sizeof(err_text), "ERR no PUB dataSocket configured");
             reply_text = err_text;
           }
+        } else if (cmd && text_equals_nocase(cmd, cmd_len, "DATA_PAYLOAD_BYTES_PUB")) {
+          int bytes = 0;
+          if (zcm_proc_runtime_payload_bytes(&cfg, ZCM_PROC_DATA_SOCKET_PUB, &bytes) == 0) {
+            snprintf(dynamic_reply, sizeof(dynamic_reply), "%d", bytes);
+            reply_text = dynamic_reply;
+          } else {
+            malformed = 1;
+            req_code = 404;
+            snprintf(err_text, sizeof(err_text), "ERR no PUB dataSocket configured");
+            reply_text = err_text;
+          }
+        } else if (cmd && text_equals_nocase(cmd, cmd_len, "DATA_PAYLOAD_BYTES_SUB")) {
+          int bytes = 0;
+          if (zcm_proc_runtime_payload_bytes(&cfg, ZCM_PROC_DATA_SOCKET_SUB, &bytes) == 0) {
+            snprintf(dynamic_reply, sizeof(dynamic_reply), "%d", bytes);
+            reply_text = dynamic_reply;
+          } else {
+            malformed = 1;
+            req_code = 404;
+            snprintf(err_text, sizeof(err_text), "ERR no SUB dataSocket configured");
+            reply_text = err_text;
+          }
+        } else if (cmd && text_equals_nocase(cmd, cmd_len, "DATA_PAYLOAD_BYTES_PUSH")) {
+          int bytes = 0;
+          if (zcm_proc_runtime_payload_bytes(&cfg, ZCM_PROC_DATA_SOCKET_PUSH, &bytes) == 0) {
+            snprintf(dynamic_reply, sizeof(dynamic_reply), "%d", bytes);
+            reply_text = dynamic_reply;
+          } else {
+            malformed = 1;
+            req_code = 404;
+            snprintf(err_text, sizeof(err_text), "ERR no PUSH dataSocket configured");
+            reply_text = err_text;
+          }
+        } else if (cmd && text_equals_nocase(cmd, cmd_len, "DATA_PAYLOAD_BYTES_PULL")) {
+          int bytes = 0;
+          if (zcm_proc_runtime_payload_bytes(&cfg, ZCM_PROC_DATA_SOCKET_PULL, &bytes) == 0) {
+            snprintf(dynamic_reply, sizeof(dynamic_reply), "%d", bytes);
+            reply_text = dynamic_reply;
+          } else {
+            malformed = 1;
+            req_code = 404;
+            snprintf(err_text, sizeof(err_text), "ERR no PULL dataSocket configured");
+            reply_text = err_text;
+          }
         } else {
           reply_text = zcm_proc_runtime_builtin_reply_for_command(cmd, cmd_len);
         }

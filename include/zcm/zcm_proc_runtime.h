@@ -165,6 +165,23 @@ int zcm_proc_runtime_first_pub_port(const zcm_proc_runtime_cfg_t *cfg, int *out_
 int zcm_proc_runtime_first_push_port(const zcm_proc_runtime_cfg_t *cfg, int *out_port);
 
 /**
+ * @brief Return payload byte count for one data socket kind.
+ *
+ * For `PUB`/`PUSH`, this returns the configured payload byte count from the
+ * first matching data socket. For `SUB`/`PULL`, this returns the last received
+ * payload byte count observed by runtime workers (starts at `0` when the kind
+ * is configured and no payload has been received yet).
+ *
+ * @param cfg Runtime config.
+ * @param kind Data socket kind to query.
+ * @param out_bytes Output byte count.
+ * @return `0` on success, `-1` when no matching data socket is configured.
+ */
+int zcm_proc_runtime_payload_bytes(const zcm_proc_runtime_cfg_t *cfg,
+                                   zcm_proc_data_socket_kind_t kind,
+                                   int *out_bytes);
+
+/**
  * @brief Start detached background workers for configured data sockets.
  *
  * PUB/PUSH data sockets allocate TCP ports automatically from the current

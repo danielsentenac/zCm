@@ -4,7 +4,8 @@ List registered processes:
 ```bash
 ./build/tools/zcm names
 ```
-Output columns include `ROLE`, `PUB_PORT`, and `PUSH_PORT`.
+Output columns include `ROLE`, `PUB_PORT`, `PUSH_PORT`, and payload-byte columns:
+`PUB_BYTES`, `SUB_BYTES`, `PUSH_BYTES`, `PULL_BYTES`.
 
 Kill (shutdown) a registered process:
 ```bash

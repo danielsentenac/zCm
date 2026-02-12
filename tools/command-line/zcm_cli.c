@@ -4,6 +4,7 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -89,6 +90,16 @@ static int parse_port_reply(const char *text, int *out_port) {
   if (!end || *end != '\0') return -1;
   if (v < 1 || v > 65535) return -1;
   *out_port = (int)v;
+  return 0;
+}
+
+static int parse_int_reply(const char *text, int *out_value) {
+  if (!text || !out_value) return -1;
+  char *end = NULL;
+  long v = strtol(text, &end, 10);
+  if (!end || *end != '\0') return -1;
+  if (v < INT_MIN || v > INT_MAX) return -1;
+  *out_value = (int)v;
   return 0;
 }
 
@@ -210,8 +221,16 @@ static int role_has_pub(const char *role) {
   return role_contains_token(role, "PUB");
 }
 
+static int role_has_sub(const char *role) {
+  return role_contains_token(role, "SUB");
+}
+
 static int role_has_push(const char *role) {
   return role_contains_token(role, "PUSH");
+}
+
+static int role_has_pull(const char *role) {
+  return role_contains_token(role, "PULL");
 }
 
 static void role_add_token(char *role, size_t role_size, const char *token) {
@@ -269,15 +288,22 @@ static int reply_means_no_push(const char *text, int code) {
 static void probe_node_role(zcm_context_t *ctx, zcm_node_t *node,
                             const char *name, const char *endpoint,
                             char *out_role, size_t out_role_size,
-                            int *out_pub_port, int *out_push_port) {
+                            int *out_pub_port, int *out_push_port,
+                            int *out_pub_bytes, int *out_sub_bytes,
+                            int *out_push_bytes, int *out_pull_bytes) {
   if (!ctx || !node || !name || !endpoint || !out_role || out_role_size == 0 ||
-      !out_pub_port || !out_push_port) {
+      !out_pub_port || !out_push_port ||
+      !out_pub_bytes || !out_sub_bytes || !out_push_bytes || !out_pull_bytes) {
     return;
   }
 
   snprintf(out_role, out_role_size, "UNKNOWN");
   *out_pub_port = -1;
   *out_push_port = -1;
+  *out_pub_bytes = -1;
+  *out_sub_bytes = -1;
+  *out_push_bytes = -1;
+  *out_pull_bytes = -1;
 
   if (strcmp(name, "zcmbroker") == 0) {
     snprintf(out_role, out_role_size, "BROKER");
@@ -329,16 +355,86 @@ static void probe_node_role(zcm_context_t *ctx, zcm_node_t *node,
       }
     }
   }
+
+  if (role_has_pub(out_role) || strcmp(out_role, "UNKNOWN") == 0) {
+    text[0] = '\0';
+    code = 0;
+    if (query_proc_command_with_ctrl_fallback(ctx, node, name, endpoint,
+                                              "DATA_PAYLOAD_BYTES_PUB",
+                                              text, sizeof(text), &code) == 0 &&
+        code == 200) {
+      int bytes = -1;
+      if (parse_int_reply(text, &bytes) == 0) {
+        *out_pub_bytes = bytes;
+        role_add_token(out_role, out_role_size, "PUB");
+      }
+    }
+  }
+
+  if (role_has_sub(out_role) || strcmp(out_role, "UNKNOWN") == 0) {
+    text[0] = '\0';
+    code = 0;
+    if (query_proc_command_with_ctrl_fallback(ctx, node, name, endpoint,
+                                              "DATA_PAYLOAD_BYTES_SUB",
+                                              text, sizeof(text), &code) == 0 &&
+        code == 200) {
+      int bytes = -1;
+      if (parse_int_reply(text, &bytes) == 0) {
+        *out_sub_bytes = bytes;
+        role_add_token(out_role, out_role_size, "SUB");
+      }
+    }
+  }
+
+  if (role_has_push(out_role) || strcmp(out_role, "UNKNOWN") == 0) {
+    text[0] = '\0';
+    code = 0;
+    if (query_proc_command_with_ctrl_fallback(ctx, node, name, endpoint,
+                                              "DATA_PAYLOAD_BYTES_PUSH",
+                                              text, sizeof(text), &code) == 0 &&
+        code == 200) {
+      int bytes = -1;
+      if (parse_int_reply(text, &bytes) == 0) {
+        *out_push_bytes = bytes;
+        role_add_token(out_role, out_role_size, "PUSH");
+      }
+    }
+  }
+
+  if (role_has_pull(out_role) || strcmp(out_role, "UNKNOWN") == 0) {
+    text[0] = '\0';
+    code = 0;
+    if (query_proc_command_with_ctrl_fallback(ctx, node, name, endpoint,
+                                              "DATA_PAYLOAD_BYTES_PULL",
+                                              text, sizeof(text), &code) == 0 &&
+        code == 200) {
+      int bytes = -1;
+      if (parse_int_reply(text, &bytes) == 0) {
+        *out_pull_bytes = bytes;
+        role_add_token(out_role, out_role_size, "PULL");
+      }
+    }
+  }
 }
 
 typedef struct names_row_info {
   char role[32];
   int pub_port;
   int push_port;
+  int pub_bytes;
+  int sub_bytes;
+  int push_bytes;
+  int pull_bytes;
 } names_row_info_t;
 
 static void print_repeat_char(char ch, size_t n) {
   for (size_t i = 0; i < n; i++) putchar(ch);
+}
+
+static void format_int_or_dash(int value, char *out, size_t out_size) {
+  if (!out || out_size == 0) return;
+  if (value >= 0) snprintf(out, out_size, "%d", value);
+  else snprintf(out, out_size, "-");
 }
 
 static void print_names_broker_offline(const char *endpoint) {
@@ -347,25 +443,41 @@ static void print_names_broker_offline(const char *endpoint) {
   const char *role = "BROKER_OFFLINE";
   const char *pub_port = "-";
   const char *push_port = "-";
+  const char *pub_bytes = "-";
+  const char *sub_bytes = "-";
+  const char *push_bytes = "-";
+  const char *pull_bytes = "-";
 
   size_t w_name = strlen("NAME");
   size_t w_endpoint = strlen("ENDPOINT");
   size_t w_role = strlen("ROLE");
   size_t w_pub_port = strlen("PUB_PORT");
   size_t w_push_port = strlen("PUSH_PORT");
+  size_t w_pub_bytes = strlen("PUB_BYTES");
+  size_t w_sub_bytes = strlen("SUB_BYTES");
+  size_t w_push_bytes = strlen("PUSH_BYTES");
+  size_t w_pull_bytes = strlen("PULL_BYTES");
 
   if (strlen(name) > w_name) w_name = strlen(name);
   if (strlen(ep) > w_endpoint) w_endpoint = strlen(ep);
   if (strlen(role) > w_role) w_role = strlen(role);
   if (strlen(pub_port) > w_pub_port) w_pub_port = strlen(pub_port);
   if (strlen(push_port) > w_push_port) w_push_port = strlen(push_port);
+  if (strlen(pub_bytes) > w_pub_bytes) w_pub_bytes = strlen(pub_bytes);
+  if (strlen(sub_bytes) > w_sub_bytes) w_sub_bytes = strlen(sub_bytes);
+  if (strlen(push_bytes) > w_push_bytes) w_push_bytes = strlen(push_bytes);
+  if (strlen(pull_bytes) > w_pull_bytes) w_pull_bytes = strlen(pull_bytes);
 
-  printf("%-*s  %-*s  %-*s  %-*s  %-*s\n",
+  printf("%-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s\n",
          (int)w_name, "NAME",
          (int)w_endpoint, "ENDPOINT",
          (int)w_role, "ROLE",
          (int)w_pub_port, "PUB_PORT",
-         (int)w_push_port, "PUSH_PORT");
+         (int)w_push_port, "PUSH_PORT",
+         (int)w_pub_bytes, "PUB_BYTES",
+         (int)w_sub_bytes, "SUB_BYTES",
+         (int)w_push_bytes, "PUSH_BYTES",
+         (int)w_pull_bytes, "PULL_BYTES");
   print_repeat_char('-', w_name);
   printf("  ");
   print_repeat_char('-', w_endpoint);
@@ -375,14 +487,26 @@ static void print_names_broker_offline(const char *endpoint) {
   print_repeat_char('-', w_pub_port);
   printf("  ");
   print_repeat_char('-', w_push_port);
+  printf("  ");
+  print_repeat_char('-', w_pub_bytes);
+  printf("  ");
+  print_repeat_char('-', w_sub_bytes);
+  printf("  ");
+  print_repeat_char('-', w_push_bytes);
+  printf("  ");
+  print_repeat_char('-', w_pull_bytes);
   printf("\n");
 
-  printf("%-*s  %-*s  %-*s  %-*s  %-*s\n",
+  printf("%-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s\n",
          (int)w_name, name,
          (int)w_endpoint, ep,
          (int)w_role, role,
          (int)w_pub_port, pub_port,
-         (int)w_push_port, push_port);
+         (int)w_push_port, push_port,
+         (int)w_pub_bytes, pub_bytes,
+         (int)w_sub_bytes, sub_bytes,
+         (int)w_push_bytes, push_bytes,
+         (int)w_pull_bytes, pull_bytes);
 }
 
 static int do_names(const char *endpoint) {
@@ -414,11 +538,17 @@ static int do_names(const char *endpoint) {
     size_t w_role = strlen("ROLE");
     size_t w_pub_port = strlen("PUB_PORT");
     size_t w_push_port = strlen("PUSH_PORT");
+    size_t w_pub_bytes = strlen("PUB_BYTES");
+    size_t w_sub_bytes = strlen("SUB_BYTES");
+    size_t w_push_bytes = strlen("PUSH_BYTES");
+    size_t w_pull_bytes = strlen("PULL_BYTES");
 
     for (size_t i = 0; i < count; i++) {
       probe_node_role(ctx, node, entries[i].name, entries[i].endpoint,
                       rows[i].role, sizeof(rows[i].role),
-                      &rows[i].pub_port, &rows[i].push_port);
+                      &rows[i].pub_port, &rows[i].push_port,
+                      &rows[i].pub_bytes, &rows[i].sub_bytes,
+                      &rows[i].push_bytes, &rows[i].pull_bytes);
 
       size_t name_len = strlen(entries[i].name);
       if (name_len > w_name) w_name = name_len;
@@ -427,24 +557,35 @@ static int do_names(const char *endpoint) {
       size_t role_len = strlen(rows[i].role);
       if (role_len > w_role) w_role = role_len;
 
-      char port_text[16];
-      if (rows[i].pub_port > 0) snprintf(port_text, sizeof(port_text), "%d", rows[i].pub_port);
-      else snprintf(port_text, sizeof(port_text), "-");
-      size_t port_len = strlen(port_text);
+      char num_text[16];
+      format_int_or_dash((rows[i].pub_port > 0) ? rows[i].pub_port : -1, num_text, sizeof(num_text));
+      size_t port_len = strlen(num_text);
       if (port_len > w_pub_port) w_pub_port = port_len;
 
-      if (rows[i].push_port > 0) snprintf(port_text, sizeof(port_text), "%d", rows[i].push_port);
-      else snprintf(port_text, sizeof(port_text), "-");
-      port_len = strlen(port_text);
+      format_int_or_dash((rows[i].push_port > 0) ? rows[i].push_port : -1, num_text, sizeof(num_text));
+      port_len = strlen(num_text);
       if (port_len > w_push_port) w_push_port = port_len;
+
+      format_int_or_dash(rows[i].pub_bytes, num_text, sizeof(num_text));
+      if (strlen(num_text) > w_pub_bytes) w_pub_bytes = strlen(num_text);
+      format_int_or_dash(rows[i].sub_bytes, num_text, sizeof(num_text));
+      if (strlen(num_text) > w_sub_bytes) w_sub_bytes = strlen(num_text);
+      format_int_or_dash(rows[i].push_bytes, num_text, sizeof(num_text));
+      if (strlen(num_text) > w_push_bytes) w_push_bytes = strlen(num_text);
+      format_int_or_dash(rows[i].pull_bytes, num_text, sizeof(num_text));
+      if (strlen(num_text) > w_pull_bytes) w_pull_bytes = strlen(num_text);
     }
 
-    printf("%-*s  %-*s  %-*s  %-*s  %-*s\n",
+    printf("%-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s\n",
            (int)w_name, "NAME",
            (int)w_endpoint, "ENDPOINT",
            (int)w_role, "ROLE",
            (int)w_pub_port, "PUB_PORT",
-           (int)w_push_port, "PUSH_PORT");
+           (int)w_push_port, "PUSH_PORT",
+           (int)w_pub_bytes, "PUB_BYTES",
+           (int)w_sub_bytes, "SUB_BYTES",
+           (int)w_push_bytes, "PUSH_BYTES",
+           (int)w_pull_bytes, "PULL_BYTES");
     print_repeat_char('-', w_name);
     printf("  ");
     print_repeat_char('-', w_endpoint);
@@ -454,22 +595,40 @@ static int do_names(const char *endpoint) {
     print_repeat_char('-', w_pub_port);
     printf("  ");
     print_repeat_char('-', w_push_port);
+    printf("  ");
+    print_repeat_char('-', w_pub_bytes);
+    printf("  ");
+    print_repeat_char('-', w_sub_bytes);
+    printf("  ");
+    print_repeat_char('-', w_push_bytes);
+    printf("  ");
+    print_repeat_char('-', w_pull_bytes);
     printf("\n");
 
     for (size_t i = 0; i < count; i++) {
       char pub_port_text[16];
       char push_port_text[16];
-      if (rows[i].pub_port > 0) snprintf(pub_port_text, sizeof(pub_port_text), "%d", rows[i].pub_port);
-      else snprintf(pub_port_text, sizeof(pub_port_text), "-");
-      if (rows[i].push_port > 0) snprintf(push_port_text, sizeof(push_port_text), "%d", rows[i].push_port);
-      else snprintf(push_port_text, sizeof(push_port_text), "-");
+      char pub_bytes_text[16];
+      char sub_bytes_text[16];
+      char push_bytes_text[16];
+      char pull_bytes_text[16];
+      format_int_or_dash((rows[i].pub_port > 0) ? rows[i].pub_port : -1, pub_port_text, sizeof(pub_port_text));
+      format_int_or_dash((rows[i].push_port > 0) ? rows[i].push_port : -1, push_port_text, sizeof(push_port_text));
+      format_int_or_dash(rows[i].pub_bytes, pub_bytes_text, sizeof(pub_bytes_text));
+      format_int_or_dash(rows[i].sub_bytes, sub_bytes_text, sizeof(sub_bytes_text));
+      format_int_or_dash(rows[i].push_bytes, push_bytes_text, sizeof(push_bytes_text));
+      format_int_or_dash(rows[i].pull_bytes, pull_bytes_text, sizeof(pull_bytes_text));
 
-      printf("%-*s  %-*s  %-*s  %-*s  %-*s\n",
+      printf("%-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s\n",
              (int)w_name, entries[i].name,
              (int)w_endpoint, entries[i].endpoint,
              (int)w_role, rows[i].role,
              (int)w_pub_port, pub_port_text,
-             (int)w_push_port, push_port_text);
+             (int)w_push_port, push_port_text,
+             (int)w_pub_bytes, pub_bytes_text,
+             (int)w_sub_bytes, sub_bytes_text,
+             (int)w_push_bytes, push_bytes_text,
+             (int)w_pull_bytes, pull_bytes_text);
     }
 
     if (rows) {

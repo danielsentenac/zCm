@@ -48,6 +48,11 @@ Handlers:
 - each `SUB` target discovers publisher port with command `DATA_PORT_PUB`
   (fallback alias: `DATA_PORT`).
 - each `PULL` target discovers pusher port with command `DATA_PORT_PUSH`.
+- payload-byte introspection commands:
+  - `DATA_PAYLOAD_BYTES_PUB`
+  - `DATA_PAYLOAD_BYTES_SUB`
+  - `DATA_PAYLOAD_BYTES_PUSH`
+  - `DATA_PAYLOAD_BYTES_PULL`
 
 Process config at init (required):
 - zcm_proc reads the XML file path passed on the command line.
