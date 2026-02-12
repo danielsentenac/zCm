@@ -37,7 +37,7 @@ WARN_IF_INCOMPLETE_DOC = YES
 WARN_NO_PARAMDOC       = YES
 QUIET                  = NO
 
-INPUT                  = README.md include docs/zcm-msg.md docs/zcm-proc.md docs/tests.md docs/modules.md
+INPUT                  = README.md include docs/modules.md docs/api-high-level.md docs/api-low-level.md docs/message-format.md docs/tools.md docs/tool-zcm.md docs/tool-zcm-broker.md docs/tool-zcm-proc.md docs/tests.md docs/examples.md
 FILE_PATTERNS          = *.h *.md
 RECURSIVE              = YES
 USE_MDFILE_AS_MAINPAGE = README.md

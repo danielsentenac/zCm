@@ -1,4 +1,4 @@
-# zCm Tests
+# Tests
 
 This document describes the intent and coverage of the current test suite.
 

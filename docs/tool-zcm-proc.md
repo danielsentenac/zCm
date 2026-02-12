@@ -1,8 +1,8 @@
-# zcm-proc
+\page tool_zcm_proc zcm-proc
 
 `zcm_proc` is a single unified process daemon.
 
-Launch:
+Unified process executable:
 ```bash
 ./build/examples/zcm_proc <proc-config.cfg>
 ```
@@ -48,6 +48,31 @@ Handlers:
 - each `SUB` target discovers publisher port with command `DATA_PORT_PUB`
   (fallback alias: `DATA_PORT`).
 - each `PULL` target discovers pusher port with command `DATA_PORT_PUSH`.
+
+Process config at init (required):
+- zcm_proc reads the XML file path passed on the command line.
+- XML is validated against:
+  - `$ZCM_PROC_CONFIG_SCHEMA`, else `config/schema/proc-config.xsd`
+- `<process @name>` is the process registration name.
+- `zcm_proc` is always an infinite daemon (no runtime mode).
+- `zcm_proc` re-announces its registration periodically so names are restored if broker restarts.
+  - interval can be tuned with `ZCM_PROC_REANNOUNCE_MS` (default `1000`)
+- Optional repeated `<dataSocket>` configures bytes `PUB/SUB/PUSH/PULL`:
+  - `type=PUB|SUB|PUSH|PULL`
+  - `PUB`/`PUSH` auto-allocate a port from the current domain range and use optional `payload`, `intervalMs`
+  - `SUB`/`PULL` use `targets=<proc-a,proc-b,...>` (or legacy `target=<proc-name>`)
+  - `SUB` can define `topics=<prefix1,prefix2,...>` for topic-prefix filtering (default is all topics)
+  - each `SUB` target publisher port is discovered via `DATA_PORT_PUB` (fallback: `DATA_PORT`)
+  - each `PULL` target pusher port is discovered via `DATA_PORT_PUSH`
+- Optional `<handlers>` adds request reply rules:
+  - builtin command behavior is fixed: `PING -> PONG` (default reply `OK`)
+  - repeated `<type name=...><arg kind=.../>...</type>` with ordered payload args
+  - TYPE replies are built in handler code and sent as typed messages with name `<REQ_TYPE>_RPL`
+  - malformed TYPE requests are rejected with `ERROR` and expected TYPE format
+  - `zcm send` preserves the exact order of repeated payload flags
+  - payload flags: `-t/-d/-f/-i/-c/-s/-l/-b/-a`
+  - `-a` uses `kind:v1,v2,...` with `kind=char|short|int|float|double`
+- Examples: `data/basic.cfg`, `data/publisher.cfg`, `data/subscriber.cfg`, `data/pusher.cfg`, `data/puller.cfg`, `docs/config/zcmproc.cfg`
 
 ## Example
 ```xml

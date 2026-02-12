@@ -1,4 +1,4 @@
-# zcm-msg format
+# Message Format
 
 zcm-msg is a simple typed-value envelope independent of the transport and data format.
 

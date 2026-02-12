@@ -1,8 +1,9 @@
 # API Modules
 
-Use this page as the single entry point for API layers:
-- [High-Level API](group__zcm__high__level.html)
-- [Low-Level API](group__zcm__low__level.html)
+Use this page as the single entry point for API modules:
+- \subpage api_high_level "High-Level API": Process-oriented helpers that expose config-driven runtime behavior.
+
+- \subpage api_low_level "Low-Level API": Core messaging, registry, socket, and context primitives.
 
 \defgroup zcm_high_level High-Level API
 \brief Process-oriented helpers that expose config-driven runtime behavior.
