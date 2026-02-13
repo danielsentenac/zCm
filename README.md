@@ -66,14 +66,3 @@ If your ZeroMQ install provides `libzmq.pc`, `pkg-config` also works:
 ```bash
 export PKG_CONFIG_PATH=/opt/zeromq/lib/pkgconfig:/opt/zeromq/lib64/pkgconfig:$PKG_CONFIG_PATH
 ```
-
-## API Docs Publish
-Build and publish API docs to `gh-pages`:
-```bash
-./scripts/publish_api_docs.sh
-```
-
-Dry-run without pushing:
-```bash
-./scripts/publish_api_docs.sh --dry-run
-```

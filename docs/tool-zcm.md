@@ -72,8 +72,12 @@ Broker resolution for `zcm` CLI and broker:
 - `ZCmDomains` is read from:
   - `$ZCMDOMAIN_DATABASE` or `$ZCMMGR`, else
   - `$ZCMROOT/mgr`
+- `ZCmDomains` is the zCm domain registry file (broker endpoint + port range per domain).
+- Used by `zcm`, `zcm_broker`, and `zcm_proc`.
 - Line format:
   - `<domain> <nameserver-host> <nameserver-port> <first-port> <range-size> <repository>`
+  - Example:
+    - `myplace 127.0.0.1 5555 7000 100 repo`
 
 ## Environment Variables (export reference)
 
