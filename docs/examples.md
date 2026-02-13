@@ -1,36 +1,49 @@
 # Examples
 
+Common shell exports:
+```bash
+export ZCMDOMAIN=myplace
+export ZCMROOT=/path/to/zcmroot
+export ZCMMGR=$ZCMROOT/mgr
+```
+Full variable reference: \subpage tool_zcm "zcm" (`Environment Variables` section).
+
 Start a broker (endpoint via `ZCmDomains`):
 ```bash
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm_broker
+ZCMDOMAIN=myplace ZCMMGR=/path/to/zcmroot/mgr ./build/tools/zcm_broker
 ```
 Stop the broker with `Ctrl+C`, or remotely:
 ```bash
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm broker stop
+ZCMDOMAIN=myplace ZCMMGR=/path/to/zcmroot/mgr ./build/tools/zcm broker stop
 ```
 Check broker status:
 ```bash
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm broker ping
+ZCMDOMAIN=myplace ZCMMGR=/path/to/zcmroot/mgr ./build/tools/zcm broker ping
 ```
 List registered names:
 ```bash
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm broker list
+ZCMDOMAIN=myplace ZCMMGR=/path/to/zcmroot/mgr ./build/tools/zcm broker list
+```
+
+Detailed names report (role, ports, payload bytes, host):
+```bash
+ZCMDOMAIN=myplace ZCMMGR=/path/to/zcmroot/mgr ./build/tools/zcm names
 ```
 
 Default daemon request/reply (`PING` -> `PONG`):
 ```bash
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/examples/zcm_proc docs/config/zcmproc.cfg
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm ping zcmproc
+ZCMDOMAIN=myplace ZCMMGR=/path/to/zcmroot/mgr ./build/examples/zcm_proc docs/config/zcmproc.cfg
+ZCMDOMAIN=myplace ZCMMGR=/path/to/zcmroot/mgr ./build/tools/zcm ping zcmproc
 ```
 
 Typed send to a proc (`-t`, `-d`, `-f`, `-i`):
 ```bash
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm send zcmproc -type ZCM_CMD -t "hello"
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm send zcmproc -type ZCM_CMD -i 42
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm send zcmproc -type ZCM_CMD -f 3.14
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm send zcmproc -type ZCM_CMD -d 2.718281828
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm send zcmproc -type ZCM_CMD -l 99
-ZCMDOMAIN=myplace ZCMROOT=/path/to/zcmroot ./build/tools/zcm send zcmproc -type ZCM_CMD -a short:1,2,3
+ZCMDOMAIN=myplace ZCMMGR=/path/to/zcmroot/mgr ./build/tools/zcm send zcmproc -type ZCM_CMD -t "hello"
+ZCMDOMAIN=myplace ZCMMGR=/path/to/zcmroot/mgr ./build/tools/zcm send zcmproc -type ZCM_CMD -i 42
+ZCMDOMAIN=myplace ZCMMGR=/path/to/zcmroot/mgr ./build/tools/zcm send zcmproc -type ZCM_CMD -f 3.14
+ZCMDOMAIN=myplace ZCMMGR=/path/to/zcmroot/mgr ./build/tools/zcm send zcmproc -type ZCM_CMD -d 2.718281828
+ZCMDOMAIN=myplace ZCMMGR=/path/to/zcmroot/mgr ./build/tools/zcm send zcmproc -type ZCM_CMD -l 99
+ZCMDOMAIN=myplace ZCMMGR=/path/to/zcmroot/mgr ./build/tools/zcm send zcmproc -type ZCM_CMD -a short:1,2,3
 ```
 
 Ordered TYPE payload example:

@@ -4,8 +4,28 @@ List registered processes:
 ```bash
 ./build/tools/zcm names
 ```
-Output columns include `ROLE`, `PUB_PORT`, `PUSH_PORT`, and payload-byte columns:
-`PUB_BYTES`, `SUB_BYTES`, `PUSH_BYTES`, `PULL_BYTES`.
+`zcm names` prints a normalized table with these columns:
+- `NAME`: registered node name
+- `ENDPOINT`: data endpoint registered in broker
+- `HOST`: node host (from broker metadata when available, else parsed from endpoint)
+  - if `HOST` is an IP, CLI tries reverse-DNS resolution and prints hostname when PTR exists
+- `ROLE`: inferred data role (`BROKER`, `PUB`, `SUB`, `PUSH`, `PULL`, combinations, `EXTERNAL`, `BROKER_OFFLINE`)
+- `PUB_PORT`: first publisher data port exposed by node (`-` when unavailable)
+- `PUSH_PORT`: first pusher data port exposed by node (`-` when unavailable)
+- `PUB_BYTES`: publisher payload byte count
+- `SUB_BYTES`: subscriber last received payload byte count
+- `PUSH_BYTES`: pusher payload byte count
+- `PULL_BYTES`: puller last received payload byte count
+
+`zcm names` behavior details:
+- If broker is not reachable, output is still deterministic:
+  - one row for `zcmbroker`
+  - role `BROKER_OFFLINE`
+  - current broker endpoint in `ENDPOINT`
+- Nodes registered without control metadata (plain `REGISTER`) are shown as `EXTERNAL`
+  without probing `DATA_*` commands (prevents names timeout on non-`zcm_proc` nodes).
+- Nodes exposing control metadata (`REGISTER_EX` + `DATA_*` commands) can show full
+  `ROLE`, `*_PORT`, and `*_BYTES` values.
 
 Kill (shutdown) a registered process:
 ```bash
@@ -30,6 +50,23 @@ Send a typed message (explicit type required):
 ./build/tools/zcm send basic -type QUERY -d 5 -d 7 -t action -d 0
 ```
 
+Example `names` output:
+```text
+NAME       ENDPOINT                  HOST                       ROLE  PUB_PORT  PUSH_PORT  PUB_BYTES  SUB_BYTES  PUSH_BYTES  PULL_BYTES
+---------  ------------------------  -------------------------  ----  --------  ---------  ---------  ---------  ----------  ----------
+publisher  tcp://90.147.137.35:7002  olserver135.virgo.infn.it  PUB   7002      -          128        -          -           -
+zcmbroker  tcp://90.147.137.35:5555  olserver135.virgo.infn.it  BROKER -         -          -          -          -           -
+```
+
+External nodes:
+- To appear as `PUB` with `PUB_PORT`/`PUB_BYTES`, register with `REGISTER_EX`
+  and expose a control endpoint that replies to:
+  - `DATA_ROLE`
+  - `DATA_PORT_PUB` (and optional legacy `DATA_PORT`)
+  - `DATA_PAYLOAD_BYTES_PUB`
+- If a bridge registers only with plain `REGISTER`, it is shown as `EXTERNAL`
+  and byte/port columns stay `-`.
+
 Broker resolution for `zcm` CLI and broker:
 - `ZCMDOMAIN` selects the domain
 - `ZCmDomains` is read from:
@@ -37,3 +74,48 @@ Broker resolution for `zcm` CLI and broker:
   - `$ZCMROOT/mgr`
 - Line format:
   - `<domain> <nameserver-host> <nameserver-port> <first-port> <range-size> <repository>`
+
+## Environment Variables (export reference)
+
+Shared runtime variables (`zcm`, `zcm_broker`, `zcm_proc`):
+
+| Variable | Meaning |
+| --- | --- |
+| `ZCMDOMAIN` | Domain name to select the row in `ZCmDomains` (required). |
+| `ZCMDOMAIN_DATABASE` | Directory containing `ZCmDomains` (highest priority). |
+| `ZCMMGR` | Alternative directory containing `ZCmDomains`. |
+| `ZCMROOT` | Fallback root; `ZCmDomains` read from `$ZCMROOT/mgr/ZCmDomains`. |
+
+`zcm_proc` specific:
+
+| Variable | Meaning |
+| --- | --- |
+| `ZCM_PROC_CONFIG_FILE` | XML config file override. |
+| `ZCM_PROC_CONFIG_DIR` | Base directory used to resolve relative config file names. |
+| `ZCM_PROC_CONFIG_SCHEMA` | XSD schema path override. |
+| `ZCM_PROC_REANNOUNCE_MS` | Broker re-announce period in ms (default `1000`). |
+
+Build-time variables (`cmake`/toolchain):
+
+| Variable | Meaning |
+| --- | --- |
+| `ZCM_ZMQ_ROOT` | ZeroMQ prefix containing `include/` and `lib*/`. |
+| `ZCM_ZMQ_INCLUDE_DIR` | Explicit directory containing `zmq.h`. |
+| `ZCM_ZMQ_LIBRARY` | Explicit full path to `libzmq.so`/`libzmq.a`. |
+| `PKG_CONFIG_PATH` | Optional path so `pkg-config` can resolve `libzmq`. |
+
+Example exports (runtime):
+
+```bash
+export ZCMDOMAIN=Virgo
+export ZCMROOT=/virgoDev/zCm/v0r1
+export ZCMMGR=$ZCMROOT/mgr
+```
+
+Example exports (build):
+
+```bash
+export ZCM_ZMQ_ROOT=/virgoDev/zmq/v4r35/zeromq-4.3.5
+export ZCM_ZMQ_INCLUDE_DIR=$ZCM_ZMQ_ROOT/include
+export ZCM_ZMQ_LIBRARY=$ZCM_ZMQ_ROOT/src/.libs/libzmq.so
+```
