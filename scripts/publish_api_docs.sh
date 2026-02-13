@@ -52,6 +52,11 @@ if [[ ! -f "$DOXYFILE" ]]; then
   exit 1
 fi
 
+if [[ -d "$PUBLISH_DIR" ]]; then
+  echo "Cleaning previous HTML output at $PUBLISH_DIR..."
+  rm -rf "$PUBLISH_DIR"
+fi
+
 echo "Generating docs with $DOXYFILE..."
 doxygen "$DOXYFILE"
 

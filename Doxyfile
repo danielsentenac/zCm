@@ -33,7 +33,6 @@ HIDE_IN_BODY_DOCS      = YES
 WARNINGS               = YES
 WARN_IF_UNDOCUMENTED   = YES
 WARN_IF_DOC_ERROR      = YES
-WARN_IF_INCOMPLETE_DOC = YES
 WARN_NO_PARAMDOC       = YES
 QUIET                  = NO
 
@@ -54,11 +53,9 @@ LAYOUT_FILE            = docs/doxygen/layout.xml
 HTML_EXTRA_STYLESHEET  = docs/theme/doxygen-awesome.css \
                          docs/theme/doxygen-awesome-sidebar-only.css \
                          docs/theme/zcm-dark.css
-HTML_COLORSTYLE        = LIGHT
 HTML_DYNAMIC_MENUS     = YES
 DISABLE_INDEX          = NO
 GENERATE_TREEVIEW      = YES
-FULL_SIDEBAR           = NO
 
 GENERATE_LATEX         = NO
 GENERATE_XML           = NO
