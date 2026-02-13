@@ -77,18 +77,3 @@ Dry-run without pushing:
 ```bash
 ./scripts/publish_api_docs.sh --dry-run
 ```
-
-Common warnings/errors:
-- `warning: parameters of member ... are not (all) documented`
-  - The API is generated, but the function comment is incomplete (`@param` missing or partial).
-  - Fix in headers under `include/zcm/` by documenting every parameter.
-- `warning: return type of member ... is not documented`
-  - Add an explicit return description (`@return`) in the function doc block.
-- `warning: Compound ... is not documented`
-  - Add a brief Doxygen comment above the struct/typedef/enum declaration.
-- `warning: Member ... is not documented`
-  - Add field-level comments in public structs if you want a warning-free API doc build.
-- `warning: ignoring unsupported tag ... in Doxyfile`
-  - Your local Doxygen version does not support that option. Upgrade Doxygen or keep the warning if output is acceptable.
-- `error: missing required command: doxygen` (or `git` / `rsync`)
-  - Install the missing tool, then rerun the publish script.
