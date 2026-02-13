@@ -4,7 +4,6 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
-#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,16 +20,42 @@ static const char *k_builtin_ping_request = "PING";
 static const char *k_builtin_ping_reply = "PONG";
 static const char *k_builtin_default_reply = "OK";
 
-static atomic_int g_payload_bytes_pub = ATOMIC_VAR_INIT(-1);
-static atomic_int g_payload_bytes_sub = ATOMIC_VAR_INIT(-1);
-static atomic_int g_payload_bytes_push = ATOMIC_VAR_INIT(-1);
-static atomic_int g_payload_bytes_pull = ATOMIC_VAR_INIT(-1);
+static pthread_mutex_t g_payload_bytes_mu = PTHREAD_MUTEX_INITIALIZER;
+static int g_payload_bytes_pub = -1;
+static int g_payload_bytes_sub = -1;
+static int g_payload_bytes_push = -1;
+static int g_payload_bytes_pull = -1;
+
+static int payload_metric_get(int *slot) {
+  int v = -1;
+  if (!slot) return -1;
+  pthread_mutex_lock(&g_payload_bytes_mu);
+  v = *slot;
+  pthread_mutex_unlock(&g_payload_bytes_mu);
+  return v;
+}
+
+static void payload_metric_set(int *slot, int value) {
+  if (!slot) return;
+  pthread_mutex_lock(&g_payload_bytes_mu);
+  *slot = value;
+  pthread_mutex_unlock(&g_payload_bytes_mu);
+}
+
+static void payload_metric_set_if_negative(int *slot, int value) {
+  if (!slot) return;
+  pthread_mutex_lock(&g_payload_bytes_mu);
+  if (*slot < 0) *slot = value;
+  pthread_mutex_unlock(&g_payload_bytes_mu);
+}
 
 static void payload_metrics_reset(void) {
-  atomic_store(&g_payload_bytes_pub, -1);
-  atomic_store(&g_payload_bytes_sub, -1);
-  atomic_store(&g_payload_bytes_push, -1);
-  atomic_store(&g_payload_bytes_pull, -1);
+  pthread_mutex_lock(&g_payload_bytes_mu);
+  g_payload_bytes_pub = -1;
+  g_payload_bytes_sub = -1;
+  g_payload_bytes_push = -1;
+  g_payload_bytes_pull = -1;
+  pthread_mutex_unlock(&g_payload_bytes_mu);
 }
 
 static int text_equals_nocase(const char *text, uint32_t len, const char *lit) {
@@ -752,24 +777,16 @@ static void payload_metrics_record_config(const zcm_proc_data_socket_cfg_t *sock
   if (!sock) return;
   switch (sock->kind) {
     case ZCM_PROC_DATA_SOCKET_PUB:
-      if (atomic_load(&g_payload_bytes_pub) < 0) {
-        atomic_store(&g_payload_bytes_pub, (int)strlen(sock->payload));
-      }
+      payload_metric_set_if_negative(&g_payload_bytes_pub, (int)strlen(sock->payload));
       break;
     case ZCM_PROC_DATA_SOCKET_PUSH:
-      if (atomic_load(&g_payload_bytes_push) < 0) {
-        atomic_store(&g_payload_bytes_push, (int)strlen(sock->payload));
-      }
+      payload_metric_set_if_negative(&g_payload_bytes_push, (int)strlen(sock->payload));
       break;
     case ZCM_PROC_DATA_SOCKET_SUB:
-      if (atomic_load(&g_payload_bytes_sub) < 0) {
-        atomic_store(&g_payload_bytes_sub, 0);
-      }
+      payload_metric_set_if_negative(&g_payload_bytes_sub, 0);
       break;
     case ZCM_PROC_DATA_SOCKET_PULL:
-      if (atomic_load(&g_payload_bytes_pull) < 0) {
-        atomic_store(&g_payload_bytes_pull, 0);
-      }
+      payload_metric_set_if_negative(&g_payload_bytes_pull, 0);
       break;
     default:
       break;
@@ -796,10 +813,10 @@ int zcm_proc_runtime_payload_bytes(const zcm_proc_runtime_cfg_t *cfg,
       *out_bytes = (int)strlen(first->payload);
       return 0;
     case ZCM_PROC_DATA_SOCKET_SUB:
-      *out_bytes = atomic_load(&g_payload_bytes_sub);
+      *out_bytes = payload_metric_get(&g_payload_bytes_sub);
       return 0;
     case ZCM_PROC_DATA_SOCKET_PULL:
-      *out_bytes = atomic_load(&g_payload_bytes_pull);
+      *out_bytes = payload_metric_get(&g_payload_bytes_pull);
       return 0;
     default:
       return -1;
@@ -1075,9 +1092,9 @@ static void *rx_worker_main(void *arg) {
     size_t n = 0;
     if (zcm_socket_recv_bytes(rx, buf, sizeof(buf) - 1, &n) == 0) {
       if (ctx->sock.kind == ZCM_PROC_DATA_SOCKET_SUB) {
-        atomic_store(&g_payload_bytes_sub, (int)n);
+        payload_metric_set(&g_payload_bytes_sub, (int)n);
       } else if (ctx->sock.kind == ZCM_PROC_DATA_SOCKET_PULL) {
-        atomic_store(&g_payload_bytes_pull, (int)n);
+        payload_metric_set(&g_payload_bytes_pull, (int)n);
       }
       buf[n] = '\0';
       if (ctx->on_sub_payload) {

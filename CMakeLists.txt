@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.14)
 
 project(zCm
   VERSION 0.1.0
@@ -12,6 +12,9 @@ option(ZCM_BUILD_TESTS "Build zCm tests" ON)
 option(ZCM_ENABLE_ZMQ "Enable ZeroMQ transport backend" ON)
 option(ZCM_BUILD_EXAMPLES "Build zCm examples" ON)
 option(ZCM_BUILD_TOOLS "Build zCm tools" ON)
+set(ZCM_ZMQ_ROOT "$ENV{ZCM_ZMQ_ROOT}" CACHE PATH "ZeroMQ installation prefix (contains include/ and lib/)")
+set(ZCM_ZMQ_INCLUDE_DIR "$ENV{ZCM_ZMQ_INCLUDE_DIR}" CACHE PATH "ZeroMQ include directory (contains zmq.h)")
+set(ZCM_ZMQ_LIBRARY "$ENV{ZCM_ZMQ_LIBRARY}" CACHE FILEPATH "Absolute path to libzmq shared/static library")
 
 add_library(zcm_lib
   src/low-level/zcm_context.c
@@ -34,10 +37,108 @@ target_include_directories(zcm_lib
 )
 
 if(ZCM_ENABLE_ZMQ)
-  find_package(PkgConfig REQUIRED)
-  pkg_check_modules(PC_ZMQ REQUIRED libzmq)
-  target_include_directories(zcm_lib PRIVATE ${PC_ZMQ_INCLUDE_DIRS})
-  target_link_libraries(zcm_lib PRIVATE ${PC_ZMQ_LIBRARIES})
+  set(_zcm_zmq_include_dirs "")
+  set(_zcm_zmq_link_libs "")
+  set(_zcm_zmq_link_opts "")
+  set(_zcm_zmq_origin "")
+
+  if(ZCM_ZMQ_INCLUDE_DIR AND ZCM_ZMQ_LIBRARY)
+    if(NOT EXISTS "${ZCM_ZMQ_INCLUDE_DIR}/zmq.h")
+      message(FATAL_ERROR
+        "ZCM_ZMQ_INCLUDE_DIR is set but zmq.h is missing:\n"
+        "  ${ZCM_ZMQ_INCLUDE_DIR}/zmq.h")
+    endif()
+    if(NOT EXISTS "${ZCM_ZMQ_LIBRARY}")
+      message(FATAL_ERROR
+        "ZCM_ZMQ_LIBRARY does not exist:\n"
+        "  ${ZCM_ZMQ_LIBRARY}\n"
+        "Build/install ZeroMQ first, or pass an existing library path "
+        "(for example libzmq.so.5.x.y or libzmq.a).")
+    endif()
+    list(APPEND _zcm_zmq_include_dirs "${ZCM_ZMQ_INCLUDE_DIR}")
+    list(APPEND _zcm_zmq_link_libs "${ZCM_ZMQ_LIBRARY}")
+    set(_zcm_zmq_origin "explicit ZCM_ZMQ_INCLUDE_DIR/ZCM_ZMQ_LIBRARY")
+  elseif(ZCM_ZMQ_ROOT)
+    find_path(_zcm_zmq_inc_from_root
+      NAMES zmq.h
+      HINTS "${ZCM_ZMQ_ROOT}"
+      PATH_SUFFIXES include
+      NO_DEFAULT_PATH
+    )
+    find_library(_zcm_zmq_lib_from_root
+      NAMES zmq libzmq
+      HINTS "${ZCM_ZMQ_ROOT}"
+      PATH_SUFFIXES lib lib64 src/.libs
+      NO_DEFAULT_PATH
+    )
+    if(_zcm_zmq_inc_from_root AND _zcm_zmq_lib_from_root)
+      list(APPEND _zcm_zmq_include_dirs "${_zcm_zmq_inc_from_root}")
+      list(APPEND _zcm_zmq_link_libs "${_zcm_zmq_lib_from_root}")
+      set(_zcm_zmq_origin "ZCM_ZMQ_ROOT")
+    endif()
+  endif()
+
+  if(NOT _zcm_zmq_include_dirs OR NOT _zcm_zmq_link_libs)
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+      pkg_check_modules(PC_ZMQ QUIET libzmq)
+    endif()
+    if(PC_ZMQ_FOUND)
+      list(APPEND _zcm_zmq_include_dirs ${PC_ZMQ_INCLUDE_DIRS})
+      if(PC_ZMQ_LINK_LIBRARIES)
+        list(APPEND _zcm_zmq_link_libs ${PC_ZMQ_LINK_LIBRARIES})
+      else()
+        list(APPEND _zcm_zmq_link_libs ${PC_ZMQ_LIBRARIES})
+      endif()
+      list(APPEND _zcm_zmq_link_opts ${PC_ZMQ_LDFLAGS_OTHER})
+      set(_zcm_zmq_origin "pkg-config(libzmq)")
+    endif()
+  endif()
+
+  if(NOT _zcm_zmq_include_dirs OR NOT _zcm_zmq_link_libs)
+    set(_zcm_zmq_include_dirs "")
+    set(_zcm_zmq_link_libs "")
+    set(_zcm_zmq_link_opts "")
+    find_path(_zcm_zmq_inc_default NAMES zmq.h)
+    find_library(_zcm_zmq_lib_default NAMES zmq libzmq)
+    if(_zcm_zmq_inc_default AND _zcm_zmq_lib_default)
+      list(APPEND _zcm_zmq_include_dirs "${_zcm_zmq_inc_default}")
+      list(APPEND _zcm_zmq_link_libs "${_zcm_zmq_lib_default}")
+      set(_zcm_zmq_origin "system search path")
+    endif()
+  endif()
+
+  if(NOT _zcm_zmq_include_dirs OR NOT _zcm_zmq_link_libs)
+    message(FATAL_ERROR
+      "ZeroMQ not found. Provide one of:\n"
+      "  -DZCM_ZMQ_ROOT=/path/to/zeromq\n"
+      "  -DZCM_ZMQ_INCLUDE_DIR=/path/include -DZCM_ZMQ_LIBRARY=/path/lib/libzmq.so\n"
+      "or set PKG_CONFIG_PATH so pkg-config can resolve libzmq."
+    )
+  endif()
+
+  target_include_directories(zcm_lib PRIVATE ${_zcm_zmq_include_dirs})
+  target_link_libraries(zcm_lib PRIVATE ${_zcm_zmq_link_libs})
+  if(_zcm_zmq_link_opts)
+    target_link_options(zcm_lib PRIVATE ${_zcm_zmq_link_opts})
+  endif()
+
+  set(_zcm_zmq_rpath_dirs "")
+  foreach(_zcm_lib IN LISTS _zcm_zmq_link_libs)
+    if(IS_ABSOLUTE "${_zcm_lib}")
+      get_filename_component(_zcm_lib_dir "${_zcm_lib}" DIRECTORY)
+      list(APPEND _zcm_zmq_rpath_dirs "${_zcm_lib_dir}")
+    endif()
+  endforeach()
+  list(REMOVE_DUPLICATES _zcm_zmq_rpath_dirs)
+  if(_zcm_zmq_rpath_dirs)
+    set_property(TARGET zcm_lib APPEND PROPERTY BUILD_RPATH "${_zcm_zmq_rpath_dirs}")
+    set_property(TARGET zcm_lib APPEND PROPERTY INSTALL_RPATH "${_zcm_zmq_rpath_dirs}")
+  endif()
+
+  message(STATUS "ZeroMQ source: ${_zcm_zmq_origin}")
+  message(STATUS "ZeroMQ include: ${_zcm_zmq_include_dirs}")
+  message(STATUS "ZeroMQ libs: ${_zcm_zmq_link_libs}")
   target_compile_definitions(zcm_lib PRIVATE ZCM_HAS_ZMQ=1)
 endif()
 

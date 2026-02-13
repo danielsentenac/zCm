@@ -5,11 +5,14 @@
 #include <ctype.h>
 #include <errno.h>
 #include <limits.h>
+#include <arpa/inet.h>
+#include <netdb.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -101,6 +104,68 @@ static int parse_int_reply(const char *text, int *out_value) {
   if (v < INT_MIN || v > INT_MAX) return -1;
   *out_value = (int)v;
   return 0;
+}
+
+static void extract_host_from_endpoint(const char *endpoint, char *out_host, size_t out_host_size) {
+  if (!out_host || out_host_size == 0) return;
+  snprintf(out_host, out_host_size, "-");
+  if (!endpoint || !*endpoint) return;
+
+  const char *p = strstr(endpoint, "://");
+  p = p ? (p + 3) : endpoint;
+  if (!*p) return;
+
+  if (*p == '[') {
+    const char *end = strchr(p + 1, ']');
+    if (!end || end <= p + 1) return;
+    size_t n = (size_t)(end - (p + 1));
+    if (n >= out_host_size) n = out_host_size - 1;
+    memcpy(out_host, p + 1, n);
+    out_host[n] = '\0';
+    return;
+  }
+
+  const char *last_colon = strrchr(p, ':');
+  size_t n = last_colon ? (size_t)(last_colon - p) : strlen(p);
+  if (n == 0) return;
+  if (n >= out_host_size) n = out_host_size - 1;
+  memcpy(out_host, p, n);
+  out_host[n] = '\0';
+}
+
+static void resolve_hostname_if_ip(char *host, size_t host_size) {
+  if (!host || host_size == 0 || !host[0] || strcmp(host, "-") == 0) return;
+
+  struct sockaddr_storage ss;
+  socklen_t ss_len = 0;
+  memset(&ss, 0, sizeof(ss));
+
+  struct in_addr a4;
+  if (inet_pton(AF_INET, host, &a4) == 1) {
+    struct sockaddr_in *sa = (struct sockaddr_in *)&ss;
+    sa->sin_family = AF_INET;
+    sa->sin_addr = a4;
+    ss_len = (socklen_t)sizeof(*sa);
+  } else {
+    struct in6_addr a6;
+    if (inet_pton(AF_INET6, host, &a6) == 1) {
+      struct sockaddr_in6 *sa6 = (struct sockaddr_in6 *)&ss;
+      sa6->sin6_family = AF_INET6;
+      sa6->sin6_addr = a6;
+      ss_len = (socklen_t)sizeof(*sa6);
+    } else {
+      return;
+    }
+  }
+
+  char resolved[NI_MAXHOST] = {0};
+  if (getnameinfo((struct sockaddr *)&ss, ss_len,
+                  resolved, sizeof(resolved),
+                  NULL, 0, NI_NAMEREQD) == 0 && resolved[0]) {
+    size_t n = strlen(resolved);
+    if (n > 0 && resolved[n - 1] == '.') resolved[n - 1] = '\0';
+    snprintf(host, host_size, "%s", resolved);
+  }
 }
 
 static int query_proc_command_once(zcm_context_t *ctx, const char *endpoint,
@@ -290,14 +355,18 @@ static void probe_node_role(zcm_context_t *ctx, zcm_node_t *node,
                             char *out_role, size_t out_role_size,
                             int *out_pub_port, int *out_push_port,
                             int *out_pub_bytes, int *out_sub_bytes,
-                            int *out_push_bytes, int *out_pull_bytes) {
+                            int *out_push_bytes, int *out_pull_bytes,
+                            char *out_host, size_t out_host_size) {
   if (!ctx || !node || !name || !endpoint || !out_role || out_role_size == 0 ||
       !out_pub_port || !out_push_port ||
-      !out_pub_bytes || !out_sub_bytes || !out_push_bytes || !out_pull_bytes) {
+      !out_pub_bytes || !out_sub_bytes || !out_push_bytes || !out_pull_bytes ||
+      !out_host || out_host_size == 0) {
     return;
   }
 
   snprintf(out_role, out_role_size, "UNKNOWN");
+  extract_host_from_endpoint(endpoint, out_host, out_host_size);
+  resolve_hostname_if_ip(out_host, out_host_size);
   *out_pub_port = -1;
   *out_push_port = -1;
   *out_pub_bytes = -1;
@@ -310,9 +379,39 @@ static void probe_node_role(zcm_context_t *ctx, zcm_node_t *node,
     return;
   }
 
+  char probe_endpoint[512] = {0};
+  snprintf(probe_endpoint, sizeof(probe_endpoint), "%s", endpoint);
+
+  /* Fast-path for non-zcm_proc registrants (REGISTER without control metadata).
+   * Those nodes do not expose DATA_* commands and probing them can make
+   * `zcm names` hit the global timeout. */
+  char info_ep[512] = {0};
+  char info_ctrl_ep[512] = {0};
+  char info_host[256] = {0};
+  int info_pid = 0;
+  if (zcm_node_info(node, name,
+                    info_ep, sizeof(info_ep),
+                    info_ctrl_ep, sizeof(info_ctrl_ep),
+                    info_host, sizeof(info_host),
+                    &info_pid) == 0) {
+    if (info_host[0]) {
+      snprintf(out_host, out_host_size, "%s", info_host);
+      resolve_hostname_if_ip(out_host, out_host_size);
+    } else if (info_ep[0]) {
+      extract_host_from_endpoint(info_ep, out_host, out_host_size);
+      resolve_hostname_if_ip(out_host, out_host_size);
+    }
+    if (info_ctrl_ep[0]) {
+      snprintf(probe_endpoint, sizeof(probe_endpoint), "%s", info_ctrl_ep);
+    } else if (info_pid <= 0 && info_host[0] == '\0') {
+      snprintf(out_role, out_role_size, "EXTERNAL");
+      return;
+    }
+  }
+
   char text[128] = {0};
   int code = 0;
-  if (query_proc_command_with_ctrl_fallback(ctx, node, name, endpoint,
+  if (query_proc_command_with_ctrl_fallback(ctx, node, name, probe_endpoint,
                                             "DATA_ROLE", text, sizeof(text), &code) == 0 &&
       code == 200 && role_is_valid(text)) {
     snprintf(out_role, out_role_size, "%s", text);
@@ -321,9 +420,9 @@ static void probe_node_role(zcm_context_t *ctx, zcm_node_t *node,
   if (role_has_pub(out_role) || strcmp(out_role, "UNKNOWN") == 0) {
     text[0] = '\0';
     code = 0;
-    if (query_proc_command_with_ctrl_fallback(ctx, node, name, endpoint,
+    if (query_proc_command_with_ctrl_fallback(ctx, node, name, probe_endpoint,
                                               "DATA_PORT_PUB", text, sizeof(text), &code) != 0) {
-      (void)query_proc_command_with_ctrl_fallback(ctx, node, name, endpoint,
+      (void)query_proc_command_with_ctrl_fallback(ctx, node, name, probe_endpoint,
                                                   "DATA_PORT", text, sizeof(text), &code);
     }
     if (text[0] != '\0' || code != 0) {
@@ -342,7 +441,7 @@ static void probe_node_role(zcm_context_t *ctx, zcm_node_t *node,
   if (role_has_push(out_role) || strcmp(out_role, "UNKNOWN") == 0) {
     text[0] = '\0';
     code = 0;
-    if (query_proc_command_with_ctrl_fallback(ctx, node, name, endpoint,
+    if (query_proc_command_with_ctrl_fallback(ctx, node, name, probe_endpoint,
                                               "DATA_PORT_PUSH", text, sizeof(text), &code) == 0) {
       if (code == 200) {
         int port = 0;
@@ -359,7 +458,7 @@ static void probe_node_role(zcm_context_t *ctx, zcm_node_t *node,
   if (role_has_pub(out_role) || strcmp(out_role, "UNKNOWN") == 0) {
     text[0] = '\0';
     code = 0;
-    if (query_proc_command_with_ctrl_fallback(ctx, node, name, endpoint,
+    if (query_proc_command_with_ctrl_fallback(ctx, node, name, probe_endpoint,
                                               "DATA_PAYLOAD_BYTES_PUB",
                                               text, sizeof(text), &code) == 0 &&
         code == 200) {
@@ -374,7 +473,7 @@ static void probe_node_role(zcm_context_t *ctx, zcm_node_t *node,
   if (role_has_sub(out_role) || strcmp(out_role, "UNKNOWN") == 0) {
     text[0] = '\0';
     code = 0;
-    if (query_proc_command_with_ctrl_fallback(ctx, node, name, endpoint,
+    if (query_proc_command_with_ctrl_fallback(ctx, node, name, probe_endpoint,
                                               "DATA_PAYLOAD_BYTES_SUB",
                                               text, sizeof(text), &code) == 0 &&
         code == 200) {
@@ -389,7 +488,7 @@ static void probe_node_role(zcm_context_t *ctx, zcm_node_t *node,
   if (role_has_push(out_role) || strcmp(out_role, "UNKNOWN") == 0) {
     text[0] = '\0';
     code = 0;
-    if (query_proc_command_with_ctrl_fallback(ctx, node, name, endpoint,
+    if (query_proc_command_with_ctrl_fallback(ctx, node, name, probe_endpoint,
                                               "DATA_PAYLOAD_BYTES_PUSH",
                                               text, sizeof(text), &code) == 0 &&
         code == 200) {
@@ -404,7 +503,7 @@ static void probe_node_role(zcm_context_t *ctx, zcm_node_t *node,
   if (role_has_pull(out_role) || strcmp(out_role, "UNKNOWN") == 0) {
     text[0] = '\0';
     code = 0;
-    if (query_proc_command_with_ctrl_fallback(ctx, node, name, endpoint,
+    if (query_proc_command_with_ctrl_fallback(ctx, node, name, probe_endpoint,
                                               "DATA_PAYLOAD_BYTES_PULL",
                                               text, sizeof(text), &code) == 0 &&
         code == 200) {
@@ -418,6 +517,7 @@ static void probe_node_role(zcm_context_t *ctx, zcm_node_t *node,
 }
 
 typedef struct names_row_info {
+  char host[256];
   char role[32];
   int pub_port;
   int push_port;
@@ -440,6 +540,7 @@ static void format_int_or_dash(int value, char *out, size_t out_size) {
 static void print_names_broker_offline(const char *endpoint) {
   const char *name = "zcmbroker";
   const char *ep = (endpoint && *endpoint) ? endpoint : "-";
+  char host[256] = {0};
   const char *role = "BROKER_OFFLINE";
   const char *pub_port = "-";
   const char *push_port = "-";
@@ -450,6 +551,7 @@ static void print_names_broker_offline(const char *endpoint) {
 
   size_t w_name = strlen("NAME");
   size_t w_endpoint = strlen("ENDPOINT");
+  size_t w_host = strlen("HOST");
   size_t w_role = strlen("ROLE");
   size_t w_pub_port = strlen("PUB_PORT");
   size_t w_push_port = strlen("PUSH_PORT");
@@ -458,8 +560,11 @@ static void print_names_broker_offline(const char *endpoint) {
   size_t w_push_bytes = strlen("PUSH_BYTES");
   size_t w_pull_bytes = strlen("PULL_BYTES");
 
+  extract_host_from_endpoint(ep, host, sizeof(host));
+  resolve_hostname_if_ip(host, sizeof(host));
   if (strlen(name) > w_name) w_name = strlen(name);
   if (strlen(ep) > w_endpoint) w_endpoint = strlen(ep);
+  if (strlen(host) > w_host) w_host = strlen(host);
   if (strlen(role) > w_role) w_role = strlen(role);
   if (strlen(pub_port) > w_pub_port) w_pub_port = strlen(pub_port);
   if (strlen(push_port) > w_push_port) w_push_port = strlen(push_port);
@@ -468,9 +573,10 @@ static void print_names_broker_offline(const char *endpoint) {
   if (strlen(push_bytes) > w_push_bytes) w_push_bytes = strlen(push_bytes);
   if (strlen(pull_bytes) > w_pull_bytes) w_pull_bytes = strlen(pull_bytes);
 
-  printf("%-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s\n",
+  printf("%-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s\n",
          (int)w_name, "NAME",
          (int)w_endpoint, "ENDPOINT",
+         (int)w_host, "HOST",
          (int)w_role, "ROLE",
          (int)w_pub_port, "PUB_PORT",
          (int)w_push_port, "PUSH_PORT",
@@ -481,6 +587,8 @@ static void print_names_broker_offline(const char *endpoint) {
   print_repeat_char('-', w_name);
   printf("  ");
   print_repeat_char('-', w_endpoint);
+  printf("  ");
+  print_repeat_char('-', w_host);
   printf("  ");
   print_repeat_char('-', w_role);
   printf("  ");
@@ -497,9 +605,10 @@ static void print_names_broker_offline(const char *endpoint) {
   print_repeat_char('-', w_pull_bytes);
   printf("\n");
 
-  printf("%-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s\n",
+  printf("%-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s\n",
          (int)w_name, name,
          (int)w_endpoint, ep,
+         (int)w_host, host,
          (int)w_role, role,
          (int)w_pub_port, pub_port,
          (int)w_push_port, push_port,
@@ -535,6 +644,7 @@ static int do_names(const char *endpoint) {
 
     size_t w_name = strlen("NAME");
     size_t w_endpoint = strlen("ENDPOINT");
+    size_t w_host = strlen("HOST");
     size_t w_role = strlen("ROLE");
     size_t w_pub_port = strlen("PUB_PORT");
     size_t w_push_port = strlen("PUSH_PORT");
@@ -548,12 +658,15 @@ static int do_names(const char *endpoint) {
                       rows[i].role, sizeof(rows[i].role),
                       &rows[i].pub_port, &rows[i].push_port,
                       &rows[i].pub_bytes, &rows[i].sub_bytes,
-                      &rows[i].push_bytes, &rows[i].pull_bytes);
+                      &rows[i].push_bytes, &rows[i].pull_bytes,
+                      rows[i].host, sizeof(rows[i].host));
 
       size_t name_len = strlen(entries[i].name);
       if (name_len > w_name) w_name = name_len;
       size_t ep_len = strlen(entries[i].endpoint);
       if (ep_len > w_endpoint) w_endpoint = ep_len;
+      size_t host_len = strlen(rows[i].host);
+      if (host_len > w_host) w_host = host_len;
       size_t role_len = strlen(rows[i].role);
       if (role_len > w_role) w_role = role_len;
 
@@ -576,9 +689,10 @@ static int do_names(const char *endpoint) {
       if (strlen(num_text) > w_pull_bytes) w_pull_bytes = strlen(num_text);
     }
 
-    printf("%-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s\n",
+    printf("%-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s\n",
            (int)w_name, "NAME",
            (int)w_endpoint, "ENDPOINT",
+           (int)w_host, "HOST",
            (int)w_role, "ROLE",
            (int)w_pub_port, "PUB_PORT",
            (int)w_push_port, "PUSH_PORT",
@@ -589,6 +703,8 @@ static int do_names(const char *endpoint) {
     print_repeat_char('-', w_name);
     printf("  ");
     print_repeat_char('-', w_endpoint);
+    printf("  ");
+    print_repeat_char('-', w_host);
     printf("  ");
     print_repeat_char('-', w_role);
     printf("  ");
@@ -619,9 +735,10 @@ static int do_names(const char *endpoint) {
       format_int_or_dash(rows[i].push_bytes, push_bytes_text, sizeof(push_bytes_text));
       format_int_or_dash(rows[i].pull_bytes, pull_bytes_text, sizeof(pull_bytes_text));
 
-      printf("%-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s\n",
+      printf("%-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s\n",
              (int)w_name, entries[i].name,
              (int)w_endpoint, entries[i].endpoint,
+             (int)w_host, rows[i].host,
              (int)w_role, rows[i].role,
              (int)w_pub_port, pub_port_text,
              (int)w_push_port, push_port_text,
@@ -1141,73 +1258,91 @@ static int do_send(const char *endpoint, const char *name, const char *type,
   int rc = 1;
   zcm_context_t *ctx = zcm_context_new();
   zcm_node_t *node = NULL;
-  zcm_socket_t *req = NULL;
-  zcm_msg_t *msg = NULL;
-  zcm_msg_t *reply = NULL;
+  char ep[256] = {0};
+  char ctrl_ep[512] = {0};
+  const char *targets[2] = {NULL, NULL};
+  int target_count = 0;
+  int attempt;
 
   if (!ctx) return 1;
   node = zcm_node_new(ctx, endpoint);
   if (!node) goto out;
 
-  char ep[256] = {0};
   if (zcm_node_lookup(node, name, ep, sizeof(ep)) != 0) {
     fprintf(stderr, "zcm: lookup failed for %s\n", name);
     goto out;
   }
 
-  req = zcm_socket_new(ctx, ZCM_SOCK_REQ);
-  if (!req) goto out;
-  if (zcm_socket_connect(req, ep) != 0) {
-    fprintf(stderr, "zcm: connect failed\n");
-    goto out;
-  }
-  zcm_socket_set_timeouts(req, 1000);
-
-  msg = zcm_msg_new();
-  if (!msg) goto out;
-  zcm_msg_set_type(msg, type);
-  for (size_t i = 0; i < value_count; i++) {
-    if (set_payload_value(msg, values[i].kind, values[i].value) != 0) {
-      fprintf(stderr, "zcm: invalid payload value at position %zu\n", i + 1);
-      goto out;
-    }
-  }
-
-  if (zcm_socket_send_msg(req, msg) != 0) {
-    fprintf(stderr, "zcm: send failed\n");
-    goto out;
-  }
-
-  reply = zcm_msg_new();
-  if (!reply) goto out;
-  if (zcm_socket_recv_msg(req, reply) != 0) {
-    fprintf(stderr, "zcm: no reply from %s\n", name);
-    goto out;
-  }
-
-  const char *text = NULL;
-  uint32_t text_len = 0;
-  int32_t code = 0;
-  const char *reply_type = zcm_msg_get_type(reply);
-  if (!reply_type) reply_type = "";
-
-  zcm_msg_rewind(reply);
-  if (zcm_msg_get_text(reply, &text, &text_len) == 0 &&
-      zcm_msg_get_int(reply, &code) == 0 &&
-      zcm_msg_remaining(reply) == 0) {
-    printf("[REQ -> %s] received reply: msgType=%s text=%.*s code=%d\n",
-           name, reply_type, (int)text_len, text, code);
+  (void)zcm_node_info(node, name, NULL, 0, ctrl_ep, sizeof(ctrl_ep), NULL, 0, NULL);
+  if (ctrl_ep[0] && strcmp(ctrl_ep, ep) != 0) {
+    targets[target_count++] = ctrl_ep;
+    targets[target_count++] = ep;
   } else {
-    printf("[REQ -> %s] received reply: msgType=%s", name, reply_type);
-    (void)print_reply_payload_generic(reply);
+    targets[target_count++] = ep;
   }
 
-  rc = 0;
+  for (attempt = 0; attempt < target_count; attempt++) {
+    zcm_socket_t *req = NULL;
+    zcm_msg_t *msg = NULL;
+    zcm_msg_t *reply = NULL;
+    const char *reply_type = NULL;
+    const char *text = NULL;
+    uint32_t text_len = 0;
+    int32_t code = 0;
+
+    req = zcm_socket_new(ctx, ZCM_SOCK_REQ);
+    if (!req) goto attempt_out;
+    if (zcm_socket_connect(req, targets[attempt]) != 0) goto attempt_out;
+    zcm_socket_set_timeouts(req, 1000);
+
+    msg = zcm_msg_new();
+    if (!msg) goto attempt_out;
+    zcm_msg_set_type(msg, type);
+    for (size_t i = 0; i < value_count; i++) {
+      if (set_payload_value(msg, values[i].kind, values[i].value) != 0) {
+        fprintf(stderr, "zcm: invalid payload value at position %zu\n", i + 1);
+        goto attempt_out;
+      }
+    }
+
+    if (zcm_socket_send_msg(req, msg) != 0) goto attempt_out;
+
+    reply = zcm_msg_new();
+    if (!reply) goto attempt_out;
+    if (zcm_socket_recv_msg(req, reply) != 0) goto attempt_out;
+
+    reply_type = zcm_msg_get_type(reply);
+    if (!reply_type) reply_type = "";
+    zcm_msg_rewind(reply);
+    if (zcm_msg_get_text(reply, &text, &text_len) == 0 &&
+        zcm_msg_get_int(reply, &code) == 0 &&
+        zcm_msg_remaining(reply) == 0) {
+      int is_ctrl_target = (ctrl_ep[0] && strcmp(targets[attempt], ctrl_ep) == 0);
+      if (is_ctrl_target && target_count > 1 &&
+          code == 404 &&
+          text_len == strlen("UNKNOWN_CMD") &&
+          strncmp(text, "UNKNOWN_CMD", text_len) == 0) {
+        /* Control endpoint does not implement generic QUERY payloads:
+         * retry once on the data endpoint. */
+        goto attempt_out;
+      }
+      printf("[REQ -> %s] received reply: msgType=%s text=%.*s code=%d\n",
+             name, reply_type, (int)text_len, text, code);
+    } else {
+      printf("[REQ -> %s] received reply: msgType=%s", name, reply_type);
+      (void)print_reply_payload_generic(reply);
+    }
+    rc = 0;
+
+attempt_out:
+    if (reply) zcm_msg_free(reply);
+    if (msg) zcm_msg_free(msg);
+    if (req) zcm_socket_free(req);
+    if (rc == 0) break;
+  }
 
 out:
-  if (reply) zcm_msg_free(reply);
-  if (msg) zcm_msg_free(msg);
-  if (req) zcm_socket_free(req);
+  if (rc != 0) fprintf(stderr, "zcm: no reply from %s\n", name);
   if (node) zcm_node_free(node);
   zcm_context_free(ctx);
   return rc;

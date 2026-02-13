@@ -118,7 +118,8 @@ This document describes the intent and coverage of the current test suite.
 ### `zcm_cli_workflow`
 **Purpose:** end-to-end CLI workflow on real daemons and config files.
 - Starts broker and `zcm_proc` publisher/basic/subscriber processes.
-- Waits for `zcm names` registration and validates QUERY/QUERY_RPL exchange.
+- Waits for `zcm names` registration and validates names table columns
+  (`HOST`, ports, payload bytes) plus QUERY/QUERY_RPL exchange.
 - Kills publisher and checks it disappears from names.
 - Stops broker and verifies offline names behavior.
 - Restarts broker, relaunches publisher, and verifies workflow recovers.
