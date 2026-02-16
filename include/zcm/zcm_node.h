@@ -118,6 +118,9 @@ int zcm_node_lookup(zcm_node_t *node, const char *name,
  * @brief Fetch extended metadata for a registered name.
  *
  * Any output pointer can be `NULL` to skip that field.
+ * When a legacy `REGISTER` entry has no explicit control endpoint, this call
+ * attempts a default control endpoint inference for TCP endpoints
+ * (`tcp://host:data_port+1`).
  *
  * @param node Node helper.
  * @param name Name to inspect.

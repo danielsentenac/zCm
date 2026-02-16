@@ -21,12 +21,21 @@ int main(void) {
 
   zcm_node_register(node, "a", "tcp://127.0.0.1:7001");
   zcm_node_register(node, "b", "tcp://127.0.0.1:7002");
+  if (zcm_node_register_ex(node, "ifacepub", "tcp://eth0:7003",
+                           "", "publisher-host", 1234) != 0) {
+    return 1;
+  }
+
+  printf("zcm_node_list: verify lookup endpoint normalization\n");
+  char lookup_ep[512] = {0};
+  if (zcm_node_lookup(node, "ifacepub", lookup_ep, sizeof(lookup_ep)) != 0) return 1;
+  if (strcmp(lookup_ep, "tcp://publisher-host:7003") != 0) return 1;
 
   printf("zcm_node_list: list registry and verify\n");
   zcm_node_entry_t *entries = NULL;
   size_t count = 0;
   if (zcm_node_list(node, &entries, &count) != 0) return 1;
-  if (count < 2) return 1;
+  if (count < 3) return 1;
 
   int found_a = 0, found_b = 0;
   for (size_t i = 0; i < count; i++) {

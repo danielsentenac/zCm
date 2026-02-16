@@ -1568,6 +1568,74 @@ out:
   return rc;
 }
 
+static int send_ping_msg(zcm_context_t *ctx, const char *target_ep) {
+  if (!ctx || !target_ep || !*target_ep) return -1;
+  if (!endpoint_is_queryable(target_ep)) return -1;
+  int rc = -1;
+  zcm_socket_t *req = zcm_socket_new(ctx, ZCM_SOCK_REQ);
+  zcm_msg_t *msg = NULL;
+  zcm_msg_t *reply = NULL;
+  if (!req) return -1;
+  if (zcm_socket_connect(req, target_ep) != 0) goto out;
+  zcm_socket_set_timeouts(req, 1000);
+
+  msg = zcm_msg_new();
+  if (!msg) goto out;
+  zcm_msg_set_type(msg, "ZCM_CMD");
+  if (zcm_msg_put_text(msg, "PING") != 0) goto out;
+  if (zcm_msg_put_int(msg, 200) != 0) goto out;
+  if (zcm_socket_send_msg(req, msg) != 0) goto out;
+
+  reply = zcm_msg_new();
+  if (!reply) goto out;
+  if (zcm_socket_recv_msg(req, reply) != 0) goto out;
+
+  {
+    const char *text = NULL;
+    uint32_t text_len = 0;
+    int32_t code = 0;
+    zcm_msg_rewind(reply);
+    if (zcm_msg_get_text(reply, &text, &text_len) == 0 &&
+        zcm_msg_get_int(reply, &code) == 0 &&
+        zcm_msg_remaining(reply) == 0) {
+      if (code == 200 &&
+          text_len == strlen("PONG") &&
+          strncmp(text, "PONG", text_len) == 0) {
+        rc = 0;
+      }
+    }
+  }
+
+out:
+  if (reply) zcm_msg_free(reply);
+  if (msg) zcm_msg_free(msg);
+  if (req) zcm_socket_free(req);
+  return rc;
+}
+
+static int send_ping_bytes(zcm_context_t *ctx, const char *target_ep) {
+  if (!ctx || !target_ep || !*target_ep) return -1;
+  if (!endpoint_is_queryable(target_ep)) return -1;
+  int rc = -1;
+  zcm_socket_t *req = zcm_socket_new(ctx, ZCM_SOCK_REQ);
+  if (!req) return -1;
+  if (zcm_socket_connect(req, target_ep) != 0) goto out;
+  zcm_socket_set_timeouts(req, 1000);
+  if (zcm_socket_send_bytes(req, "PING", 4) != 0) goto out;
+
+  {
+    char reply[32] = {0};
+    size_t n = 0;
+    if (zcm_socket_recv_bytes(req, reply, sizeof(reply) - 1, &n) != 0 || n == 0) goto out;
+    reply[n] = '\0';
+    if (strcmp(reply, "PONG") == 0) rc = 0;
+  }
+
+out:
+  if (req) zcm_socket_free(req);
+  return rc;
+}
+
 static int do_kill(const char *endpoint, const char *name) {
   int rc = 1;
   zcm_context_t *ctx = zcm_context_new();
@@ -1624,53 +1692,48 @@ static int do_ping(const char *endpoint, const char *name) {
   int rc = 1;
   zcm_context_t *ctx = zcm_context_new();
   zcm_node_t *node = NULL;
-  zcm_socket_t *req = NULL;
 
   if (!ctx) return 1;
   node = zcm_node_new(ctx, endpoint);
   if (!node) goto out;
 
+  char data_ep[512] = {0};
   char ctrl_ep[512] = {0};
   char host[256] = {0};
   int pid = 0;
-  if (zcm_node_info(node, name, NULL, 0, ctrl_ep, sizeof(ctrl_ep), host, sizeof(host), &pid) != 0) {
+  if (zcm_node_info(node, name,
+                    data_ep, sizeof(data_ep),
+                    ctrl_ep, sizeof(ctrl_ep),
+                    host, sizeof(host), &pid) != 0) {
     fprintf(stderr, "zcm: ping failed (no info for %s)\n", name);
     goto out;
   }
-  if (ctrl_ep[0] == '\0') {
-    fprintf(stderr, "zcm: ping failed (no control endpoint for %s)\n", name);
-    goto out;
+
+  {
+    const char *targets[2] = {NULL, NULL};
+    int target_count = 0;
+    if (ctrl_ep[0]) targets[target_count++] = ctrl_ep;
+    if (data_ep[0] && (!ctrl_ep[0] || strcmp(data_ep, ctrl_ep) != 0)) {
+      targets[target_count++] = data_ep;
+    }
+    if (target_count == 0) {
+      fprintf(stderr, "zcm: ping failed (no reachable endpoint for %s)\n", name);
+      goto out;
+    }
+
+    for (int i = 0; i < target_count; i++) {
+      if (send_ping_msg(ctx, targets[i]) == 0 ||
+          send_ping_bytes(ctx, targets[i]) == 0) {
+        printf("PONG %s %s %d\n", name, host, pid);
+        rc = 0;
+        goto out;
+      }
+    }
   }
 
-  req = zcm_socket_new(ctx, ZCM_SOCK_REQ);
-  if (!req) goto out;
-  if (zcm_socket_connect(req, ctrl_ep) != 0) {
-    fprintf(stderr, "zcm: ping failed (connect control endpoint)\n");
-    goto out;
-  }
-  zcm_socket_set_timeouts(req, 1000);
-  if (zcm_socket_send_bytes(req, "PING", 4) != 0) {
-    fprintf(stderr, "zcm: ping failed (send ping)\n");
-    goto out;
-  }
-
-  char reply[32] = {0};
-  size_t n = 0;
-  if (zcm_socket_recv_bytes(req, reply, sizeof(reply) - 1, &n) != 0 || n == 0) {
-    fprintf(stderr, "zcm: ping failed (no reply)\n");
-    goto out;
-  }
-  reply[n] = '\0';
-  if (strcmp(reply, "PONG") != 0) {
-    fprintf(stderr, "zcm: ping failed (reply=%s)\n", reply);
-    goto out;
-  }
-
-  printf("PONG %s %s %d\n", name, host, pid);
-  rc = 0;
+  fprintf(stderr, "zcm: ping failed (node did not acknowledge PING)\n");
 
 out:
-  if (req) zcm_socket_free(req);
   if (node) zcm_node_free(node);
   zcm_context_free(ctx);
   return rc;

@@ -5,6 +5,7 @@
 #include <string.h>
 #include <strings.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #include <zmq.h>
 
@@ -76,6 +77,83 @@ static int recv_with_timeout(void *sock, void *buf, size_t len, int timeout_ms) 
   if (rc <= 0) return -1;
   int n = zmq_recv(sock, buf, len, ZMQ_DONTWAIT);
   return n;
+}
+
+static int endpoint_tcp_parse_host_port(const char *endpoint,
+                                        char *out_host, size_t out_host_size,
+                                        int *out_port) {
+  if (!endpoint || !out_host || out_host_size == 0 || !out_port) return -1;
+  out_host[0] = '\0';
+  *out_port = 0;
+  if (strncmp(endpoint, "tcp://", 6) != 0) return -1;
+
+  const char *addr = endpoint + 6;
+  if (!*addr) return -1;
+
+  const char *host_begin = addr;
+  const char *host_end = NULL;
+  const char *port_text = NULL;
+  if (*addr == '[') {
+    host_begin = addr + 1;
+    host_end = strchr(host_begin, ']');
+    if (!host_end || host_end <= host_begin || host_end[1] != ':') return -1;
+    port_text = host_end + 2;
+  } else {
+    host_end = strrchr(addr, ':');
+    if (!host_end || host_end <= host_begin) return -1;
+    port_text = host_end + 1;
+  }
+  if (!port_text || !*port_text) return -1;
+
+  size_t host_len = (size_t)(host_end - host_begin);
+  if (host_len == 0) return -1;
+  if (host_len >= out_host_size) host_len = out_host_size - 1;
+  memcpy(out_host, host_begin, host_len);
+  out_host[host_len] = '\0';
+
+  char *end = NULL;
+  long p = strtol(port_text, &end, 10);
+  if (!end || *end != '\0' || p < 1 || p > 65535) return -1;
+  *out_port = (int)p;
+  return 0;
+}
+
+static int host_is_connectable(const char *host) {
+  if (!host || !*host) return 0;
+  if (strcmp(host, "*") == 0 ||
+      strcmp(host, "0.0.0.0") == 0 ||
+      strcmp(host, "::") == 0 ||
+      strcmp(host, "0:0:0:0:0:0:0:0") == 0) {
+    return 0;
+  }
+  return 1;
+}
+
+static int build_tcp_endpoint_text(const char *host, int port,
+                                   char *out, size_t out_size) {
+  if (!host || !*host || !out || out_size == 0) return -1;
+  if (port < 1 || port > 65535) return -1;
+
+  const int looks_ipv6 = strchr(host, ':') != NULL;
+  if (looks_ipv6 && host[0] != '[') {
+    snprintf(out, out_size, "tcp://[%s]:%d", host, port);
+  } else {
+    snprintf(out, out_size, "tcp://%s:%d", host, port);
+  }
+  return 0;
+}
+
+static int infer_default_ctrl_endpoint(const char *data_endpoint,
+                                       char *out_ctrl, size_t out_ctrl_size) {
+  char host[256] = {0};
+  int port = 0;
+
+  if (!out_ctrl || out_ctrl_size == 0) return -1;
+  out_ctrl[0] = '\0';
+  if (endpoint_tcp_parse_host_port(data_endpoint, host, sizeof(host), &port) != 0) return -1;
+  if (!host_is_connectable(host)) return -1;
+  if (port >= 65535) return -1;
+  return build_tcp_endpoint_text(host, port + 1, out_ctrl, out_ctrl_size);
 }
 
 int zcm_node_register(zcm_node_t *node, const char *name, const char *endpoint) {
@@ -189,6 +267,14 @@ int zcm_node_info(zcm_node_t *node, const char *name,
   if (n < 0) { zmq_close(sock); return -1; }
   pid_buf[n] = '\0';
   zmq_close(sock);
+
+  if (ctrl[0] == '\0') {
+    char inferred_ctrl[512] = {0};
+    if (infer_default_ctrl_endpoint(ep, inferred_ctrl, sizeof(inferred_ctrl)) == 0) {
+      strncpy(ctrl, inferred_ctrl, sizeof(ctrl) - 1);
+      ctrl[sizeof(ctrl) - 1] = '\0';
+    }
+  }
 
   if (out_endpoint && out_ep_size) {
     strncpy(out_endpoint, ep, out_ep_size - 1);

@@ -211,6 +211,13 @@ if(ZCM_BUILD_TESTS)
     RUNTIME_OUTPUT_DIRECTORY ${ZCM_TEST_OUTPUT_DIR}
   )
 
+  add_executable(zcm_node_ctrl_fallback tests/node/zcm_node_ctrl_fallback.c)
+  target_link_libraries(zcm_node_ctrl_fallback PRIVATE zcm_lib)
+  add_test(NAME zcm_node_ctrl_fallback COMMAND zcm_node_ctrl_fallback)
+  set_target_properties(zcm_node_ctrl_fallback PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${ZCM_TEST_OUTPUT_DIR}
+  )
+
   add_executable(zcm_proc_reannounce tests/node/zcm_proc_reannounce.c)
   target_link_libraries(zcm_proc_reannounce PRIVATE zcm_lib)
   add_test(NAME zcm_proc_reannounce COMMAND zcm_proc_reannounce)
@@ -226,6 +233,13 @@ if(ZCM_BUILD_TESTS)
   )
   add_test(NAME zcm_cli_workflow COMMAND zcm_cli_workflow)
   set_target_properties(zcm_cli_workflow PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${ZCM_TEST_OUTPUT_DIR}
+  )
+
+  add_executable(zcm_cli_ping_fallback tests/node/zcm_cli_ping_fallback.c)
+  target_link_libraries(zcm_cli_ping_fallback PRIVATE zcm_lib)
+  add_test(NAME zcm_cli_ping_fallback COMMAND zcm_cli_ping_fallback)
+  set_target_properties(zcm_cli_ping_fallback PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${ZCM_TEST_OUTPUT_DIR}
   )
 endif()

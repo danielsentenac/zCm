@@ -559,6 +559,29 @@ int main(void) {
     goto done;
   }
 
+  step_log("ping publisher/basic/subscriber");
+  {
+    const char *argv[] = {zcm_path, "ping", "publisher", NULL};
+    if (wait_cmd_ok(argv, "PONG publisher", 8000) != 0) {
+      fprintf(stderr, "zcm_cli_workflow: ping publisher failed\n");
+      goto done;
+    }
+  }
+  {
+    const char *argv[] = {zcm_path, "ping", "basic", NULL};
+    if (wait_cmd_ok(argv, "PONG basic", 8000) != 0) {
+      fprintf(stderr, "zcm_cli_workflow: ping basic failed\n");
+      goto done;
+    }
+  }
+  {
+    const char *argv[] = {zcm_path, "ping", "subscriber", NULL};
+    if (wait_cmd_ok(argv, "PONG subscriber", 8000) != 0) {
+      fprintf(stderr, "zcm_cli_workflow: ping subscriber failed\n");
+      goto done;
+    }
+  }
+
   {
     const char *argv[] = {zcm_path, "names", NULL};
     cmd_result_t r;
@@ -570,6 +593,39 @@ int main(void) {
       goto done;
     }
     free(r.output);
+  }
+
+  step_log("kill subscriber, verify names cycle, restart and ping again");
+  {
+    const char *argv[] = {zcm_path, "kill", "subscriber", NULL};
+    cmd_result_t r;
+    if (run_capture_argv(argv, 6000, &r) != 0) goto done;
+    int ok = (r.exit_code == 0);
+    free(r.output);
+    if (!ok) {
+      fprintf(stderr, "zcm_cli_workflow: zcm kill subscriber failed\n");
+      goto done;
+    }
+  }
+  if (wait_name_state(zcm_path, "subscriber", 0, 20000) != 0) {
+    fprintf(stderr, "zcm_cli_workflow: subscriber still present after kill\n");
+    goto done;
+  }
+  stop_pid(&subscriber_pid);
+  {
+    const char *argv[] = {proc_path, subscriber_cfg, NULL};
+    if (start_daemon_argv(argv, subscriber_log, &subscriber_pid) != 0) goto done;
+  }
+  if (wait_name_state(zcm_path, "subscriber", 1, 20000) != 0) {
+    fprintf(stderr, "zcm_cli_workflow: subscriber not re-registered after restart\n");
+    goto done;
+  }
+  {
+    const char *argv[] = {zcm_path, "ping", "subscriber", NULL};
+    if (wait_cmd_ok(argv, "PONG subscriber", 8000) != 0) {
+      fprintf(stderr, "zcm_cli_workflow: ping subscriber after restart failed\n");
+      goto done;
+    }
   }
 
   step_log("send QUERY to basic and expect QUERY_RPL");

@@ -29,6 +29,25 @@ Kill (shutdown) a registered process:
 ```bash
 ./build/tools/zcm kill NAME
 ```
+Control-command behavior:
+- `zcm ping NAME` sends control `PING` and expects `REPLY/PONG`.
+- `zcm kill NAME` sends control `KILL` and expects `REPLY/OK` before node exit.
+- `zcm broker stop` sends broker control `SHUTDOWN` and expects `OK`.
+
+Control endpoint resolution:
+- `zcm kill`/`zcm ping` first use broker `ctrl_endpoint` metadata.
+- When `ctrl_endpoint` is missing for a legacy TCP registration, the client applies
+  fallback `tcp://host:(data_port+1)`.
+- If control does not respond, the CLI retries on the registered data endpoint.
+- `zcm_proc` publishes control metadata by default (`REGISTER_EX`), so kill/ping
+  are directly routable without fallback in normal deployments.
+
+Discovery/re-registration:
+- `zcm names` uses broker registry state.
+- After broker restart, `zcm_proc` nodes re-register automatically
+  (`ZCM_PROC_REANNOUNCE_MS`, default `1000` ms), and names/ping/kill become
+  available again once discovery converges.
+
 Ping a registered process (control REQ/REP):
 ```bash
 ./build/tools/zcm ping NAME

@@ -31,8 +31,10 @@ This document describes the intent and coverage of the current test suite.
   ./build/tests/zcm_msg_fuzz
   ./build/tests/zcm_msg_vectors
   ./build/tests/zcm_node_list
+  ./build/tests/zcm_node_ctrl_fallback
   ./build/tests/zcm_node_unique_name
   ./build/tests/zcm_node_prune_dead
+  ./build/tests/zcm_cli_ping_fallback
   ./build/tests/zcm_proc_reannounce
   ./build/tests/zcm_cli_workflow
   ```
@@ -91,6 +93,15 @@ This document describes the intent and coverage of the current test suite.
 
 **Files:** `tests/node/zcm_node_list.c`
 
+### `zcm_node_ctrl_fallback`
+**Purpose:** validate control-endpoint fallback derivation for node discovery info.
+- Registers legacy endpoint without explicit `ctrl_endpoint` and checks inferred
+  `tcp://host:(data_port+1)` mapping.
+- Registers explicit `ctrl_endpoint` and verifies it is returned unchanged.
+- Covers edge cases where incrementing the data port would overflow.
+
+**Files:** `tests/node/zcm_node_ctrl_fallback.c`
+
 ### `zcm_node_unique_name`
 **Purpose:** enforce unique process names across different owners.
 - Registers a name with one PID and allows same-owner re-register.
@@ -106,6 +117,14 @@ This document describes the intent and coverage of the current test suite.
 
 **Files:** `tests/node/zcm_node_prune_dead.c`
 
+### `zcm_cli_ping_fallback`
+**Purpose:** CLI ping fallback behavior for legacy registrations.
+- Registers a node without control metadata.
+- Serves `PING` on inferred fallback control endpoint.
+- Verifies `zcm ping` succeeds via default endpoint derivation.
+
+**Files:** `tests/node/zcm_cli_ping_fallback.c`
+
 ### `zcm_proc_reannounce`
 **Purpose:** verify automatic proc re-registration after broker restart.
 - Starts a broker and a `zcm_proc` test instance.
@@ -120,6 +139,10 @@ This document describes the intent and coverage of the current test suite.
 - Starts broker and `zcm_proc` publisher/basic/subscriber processes.
 - Waits for `zcm names` registration and validates names table columns
   (`HOST`, ports, payload bytes) plus QUERY/QUERY_RPL exchange.
+- Runs a short kill/discovery cycle on `subscriber`:
+  - `zcm kill subscriber`
+  - wait removal from `zcm names`
+  - restart subscriber and verify re-registration + ping
 - Kills publisher and checks it disappears from names.
 - Stops broker and verifies offline names behavior.
 - Restarts broker, relaunches publisher, and verifies workflow recovers.

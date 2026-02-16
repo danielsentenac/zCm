@@ -59,6 +59,96 @@ static int endpoint_has_scheme(const char *endpoint, const char *scheme) {
   return strncmp(endpoint, scheme, n) == 0;
 }
 
+static int endpoint_tcp_parse_host_port(const char *endpoint,
+                                        char *out_host, size_t out_host_size,
+                                        int *out_port) {
+  if (!endpoint || !out_host || out_host_size == 0 || !out_port) return -1;
+  out_host[0] = '\0';
+  *out_port = 0;
+  if (strncmp(endpoint, "tcp://", 6) != 0) return -1;
+
+  const char *addr = endpoint + 6;
+  if (!*addr) return -1;
+
+  const char *host_begin = addr;
+  const char *host_end = NULL;
+  const char *port_text = NULL;
+  if (*addr == '[') {
+    host_begin = addr + 1;
+    host_end = strchr(host_begin, ']');
+    if (!host_end || host_end <= host_begin || host_end[1] != ':') return -1;
+    port_text = host_end + 2;
+  } else {
+    host_end = strrchr(addr, ':');
+    if (!host_end || host_end <= host_begin) return -1;
+    port_text = host_end + 1;
+  }
+  if (!port_text || !*port_text) return -1;
+
+  size_t host_len = (size_t)(host_end - host_begin);
+  if (host_len == 0) return -1;
+  if (host_len >= out_host_size) host_len = out_host_size - 1;
+  memcpy(out_host, host_begin, host_len);
+  out_host[host_len] = '\0';
+
+  char *end = NULL;
+  long p = strtol(port_text, &end, 10);
+  if (!end || *end != '\0' || p < 1 || p > 65535) return -1;
+  *out_port = (int)p;
+  return 0;
+}
+
+static int endpoint_host_needs_resolution(const char *host) {
+  if (!host || !*host) return 1;
+  if (strcmp(host, "0.0.0.0") == 0 || strcmp(host, "::") == 0 ||
+      strcmp(host, "0:0:0:0:0:0:0:0") == 0 || strcmp(host, "*") == 0) {
+    return 1;
+  }
+
+  if (strncasecmp(host, "eth", 3) == 0 ||
+      strncasecmp(host, "en", 2) == 0 ||
+      strncasecmp(host, "wl", 2) == 0 ||
+      strncasecmp(host, "lo", 2) == 0) {
+    return 1;
+  }
+
+  return 0;
+}
+
+static int build_tcp_endpoint_text(const char *host, int port,
+                                   char *out, size_t out_size) {
+  if (!host || !*host || !out || out_size == 0) return -1;
+  if (port < 1 || port > 65535) return -1;
+
+  const int looks_ipv6 = strchr(host, ':') != NULL;
+  if (looks_ipv6 && host[0] != '[') {
+    snprintf(out, out_size, "tcp://[%s]:%d", host, port);
+  } else {
+    snprintf(out, out_size, "tcp://%s:%d", host, port);
+  }
+  return 0;
+}
+
+static void entry_effective_endpoint(const struct zcm_broker_entry *e,
+                                     char *out_endpoint,
+                                     size_t out_size) {
+  char ep_host[256] = {0};
+  int ep_port = 0;
+
+  if (!out_endpoint || out_size == 0) return;
+  out_endpoint[0] = '\0';
+  if (!e || !e->endpoint || !*e->endpoint) return;
+
+  snprintf(out_endpoint, out_size, "%s", e->endpoint);
+
+  if (endpoint_tcp_parse_host_port(e->endpoint, ep_host, sizeof(ep_host), &ep_port) != 0) return;
+  if (!endpoint_host_needs_resolution(ep_host)) return;
+  if (!e->host || !*e->host) return;
+  if (endpoint_host_needs_resolution(e->host)) return;
+
+  (void)build_tcp_endpoint_text(e->host, ep_port, out_endpoint, out_size);
+}
+
 static int parse_int_text(const char *text, int *out_value) {
   if (!text || !out_value) return -1;
   char *end = NULL;
@@ -437,6 +527,16 @@ static void entry_refresh_metrics(struct zcm_broker *b, struct zcm_broker_entry 
     return;
   }
 
+  /*
+   * SUB-only external consumers (for example servlet subscribers) can register
+   * an endpoint that points to their publisher data socket. That endpoint is
+   * not a control REP endpoint and must not be probed with DATA_* commands.
+   */
+  if ((!e->ctrl_endpoint || !e->ctrl_endpoint[0]) &&
+      (strcmp(e->role, "SUB") == 0 || endpoint_has_scheme(e->endpoint, "sub://"))) {
+    return;
+  }
+
   char text[128] = {0};
   int code = 0;
 
@@ -623,8 +723,10 @@ static void *broker_thread(void *arg) {
       if (!e) {
         zmq_send(sock, "NOT_FOUND", 9, 0);
       } else {
+        char endpoint[512] = {0};
+        entry_effective_endpoint(e, endpoint, sizeof(endpoint));
         zmq_send(sock, "OK", 2, ZMQ_SNDMORE);
-        zmq_send(sock, e->endpoint, strlen(e->endpoint), 0);
+        zmq_send(sock, endpoint, strlen(endpoint), 0);
       }
     } else if (strcmp(cmd, "INFO") == 0) {
       char name[256] = {0};
@@ -641,9 +743,11 @@ static void *broker_thread(void *arg) {
         zmq_send(sock, "NOT_FOUND", 9, 0);
       } else {
         char pid_buf[32];
+        char endpoint[512] = {0};
+        entry_effective_endpoint(e, endpoint, sizeof(endpoint));
         snprintf(pid_buf, sizeof(pid_buf), "%d", e->pid);
         zmq_send(sock, "OK", 2, ZMQ_SNDMORE);
-        zmq_send(sock, e->endpoint ? e->endpoint : "", e->endpoint ? strlen(e->endpoint) : 0, ZMQ_SNDMORE);
+        zmq_send(sock, endpoint, strlen(endpoint), ZMQ_SNDMORE);
         zmq_send(sock, e->ctrl_endpoint ? e->ctrl_endpoint : "", e->ctrl_endpoint ? strlen(e->ctrl_endpoint) : 0, ZMQ_SNDMORE);
         zmq_send(sock, e->host ? e->host : "", e->host ? strlen(e->host) : 0, ZMQ_SNDMORE);
         zmq_send(sock, pid_buf, strlen(pid_buf), 0);
@@ -771,12 +875,14 @@ static void *broker_thread(void *arg) {
       int idx = 0;
       for (struct zcm_broker_entry *e = b->head; e; e = e->next) {
         entry_refresh_metrics(b, e);
+        char endpoint[512] = {0};
         char pub_port[32];
         char push_port[32];
         char pub_bytes[32];
         char sub_bytes[32];
         char push_bytes[32];
         char pull_bytes[32];
+        entry_effective_endpoint(e, endpoint, sizeof(endpoint));
         snprintf(pub_port, sizeof(pub_port), "%d", e->pub_port);
         snprintf(push_port, sizeof(push_port), "%d", e->push_port);
         snprintf(pub_bytes, sizeof(pub_bytes), "%d", e->pub_bytes);
@@ -786,7 +892,7 @@ static void *broker_thread(void *arg) {
 
         int final_flags = (idx < count - 1) ? ZMQ_SNDMORE : 0;
         zmq_send(sock, e->name ? e->name : "", e->name ? strlen(e->name) : 0, ZMQ_SNDMORE);
-        zmq_send(sock, e->endpoint ? e->endpoint : "", e->endpoint ? strlen(e->endpoint) : 0, ZMQ_SNDMORE);
+        zmq_send(sock, endpoint, strlen(endpoint), ZMQ_SNDMORE);
         zmq_send(sock, e->host ? e->host : "", e->host ? strlen(e->host) : 0, ZMQ_SNDMORE);
         zmq_send(sock, e->role, strlen(e->role), ZMQ_SNDMORE);
         zmq_send(sock, pub_port, strlen(pub_port), ZMQ_SNDMORE);
@@ -804,9 +910,11 @@ static void *broker_thread(void *arg) {
       zmq_send(sock, &count, sizeof(count), (count > 0) ? ZMQ_SNDMORE : 0);
       int idx = 0;
       for (struct zcm_broker_entry *e = b->head; e; e = e->next) {
+        char endpoint[512] = {0};
+        entry_effective_endpoint(e, endpoint, sizeof(endpoint));
         int more = (idx < count - 1) ? ZMQ_SNDMORE : 0;
         zmq_send(sock, e->name ? e->name : "", e->name ? strlen(e->name) : 0, ZMQ_SNDMORE);
-        zmq_send(sock, e->endpoint ? e->endpoint : "", e->endpoint ? strlen(e->endpoint) : 0, more);
+        zmq_send(sock, endpoint, strlen(endpoint), more);
         idx++;}
     } else {
       zmq_send(sock, "ERR", 3, 0);
