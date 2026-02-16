@@ -15,6 +15,7 @@
 # temporary excludes
 /tools/cm-bridge/
 /jchv
+/zFd
 
 # generated documentation
 /docs/_build/
