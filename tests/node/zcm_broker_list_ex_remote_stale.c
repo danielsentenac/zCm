@@ -82,7 +82,7 @@ int main(void) {
   {
     char status[16] = {0};
     int count = 0;
-    int found_stale = 0;
+    int found_broker = 0;
     int n = 0;
 
     if (recv_text_frame(req, status, sizeof(status)) != 0) {
@@ -124,11 +124,19 @@ int main(void) {
         fprintf(stderr, "zcm_broker_list_ex_remote_stale: failed while reading LIST_EX row %d\n", i);
         goto cleanup;
       }
-      if (strcmp(name, "stale-remote") == 0) found_stale = 1;
+      if (strcmp(name, "zcmbroker") == 0) found_broker = 1;
     }
 
-    if (!found_stale) {
-      fprintf(stderr, "zcm_broker_list_ex_remote_stale: stale-remote entry missing\n");
+    if (!found_broker) {
+      fprintf(stderr, "zcm_broker_list_ex_remote_stale: zcmbroker entry missing in LIST_EX\n");
+      goto cleanup;
+    }
+  }
+
+  {
+    char ep[256] = {0};
+    if (zcm_node_lookup(node, "stale-remote", ep, sizeof(ep)) == 0) {
+      fprintf(stderr, "zcm_broker_list_ex_remote_stale: stale-remote should have been pruned, got endpoint: %s\n", ep);
       goto cleanup;
     }
   }

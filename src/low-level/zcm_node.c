@@ -521,6 +521,14 @@ zcm_socket_t *zcm_socket_new(zcm_context_t *ctx, zcm_socket_type_t type) {
     free(s);
     return NULL;
   }
+  {
+    int linger = 0;
+    (void)zmq_setsockopt(s->sock, ZMQ_LINGER, &linger, sizeof(linger));
+  }
+  if (type == ZCM_SOCK_REQ) {
+    int immediate = 1;
+    (void)zmq_setsockopt(s->sock, ZMQ_IMMEDIATE, &immediate, sizeof(immediate));
+  }
   return s;
 }
 

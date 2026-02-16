@@ -108,6 +108,7 @@ This document describes the intent and coverage of the current test suite.
 - Registers a remote-host node entry with dead control endpoint.
 - Calls broker `LIST_EX` directly and verifies timely `OK` reply.
 - Ensures stale remote entries do not block broker request handling.
+- Verifies stale remote entry is pruned (subsequent lookup returns not found).
 
 **Files:** `tests/node/zcm_broker_list_ex_remote_stale.c`
 

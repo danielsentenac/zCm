@@ -26,6 +26,9 @@ List registered processes:
   `ROLE`, `*_PORT`, and `*_BYTES` values.
 - Broker-side metric probing is local-host only; stale remote registrations do not
   block `LIST_EX` responses (remote nodes should report metrics via `METRICS`).
+- For remote entries with control metadata (`REGISTER_EX` + PID), broker performs a
+  quick control liveness check during `LIST`/`LIST_EX`/`LOOKUP`/`INFO`; unreachable
+  stale entries are pruned automatically.
 
 Kill (shutdown) a registered process:
 ```bash

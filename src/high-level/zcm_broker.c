@@ -479,6 +479,15 @@ static int query_proc_command(zcm_context_t *ctx, const char *endpoint,
   return query_proc_command_once(ctx, endpoint, cmd, 0, out_text, out_text_size, out_code);
 }
 
+static int query_proc_ping_ok(zcm_context_t *ctx, const char *endpoint) {
+  char text[32] = {0};
+  int code = 0;
+  if (!ctx || !endpoint || !*endpoint) return 0;
+  if (query_proc_command_once(ctx, endpoint, "PING", 1, text, sizeof(text), &code) != 0) return 0;
+  if (code != 200) return 0;
+  return strcmp(text, "PONG") == 0;
+}
+
 static int query_proc_command_with_ctrl_fallback(zcm_context_t *ctx,
                                                  const char *endpoint,
                                                  const char *ctrl_endpoint,
@@ -496,6 +505,55 @@ static int query_proc_command_with_ctrl_fallback(zcm_context_t *ctx,
   }
   if (!endpoint || !*endpoint) return -1;
   return query_proc_command(ctx, endpoint, cmd, out_text, out_text_size, out_code);
+}
+
+static int entry_prune_stale_remote_ctrl(struct zcm_broker *b) {
+  int removed = 0;
+  struct zcm_broker_entry *prev = NULL;
+  struct zcm_broker_entry *e = NULL;
+
+  if (!b) return 0;
+  e = b->head;
+  while (e) {
+    int should_check = 0;
+    char probe_host[256] = {0};
+    int probe_port = 0;
+
+    if (strcmp(e->name, "zcmbroker") != 0 &&
+        e->pid > 0 &&
+        e->ctrl_endpoint && e->ctrl_endpoint[0] &&
+        endpoint_is_queryable(e->ctrl_endpoint)) {
+      should_check = 1;
+    }
+
+    if (should_check) {
+      if (e->host && e->host[0]) {
+        snprintf(probe_host, sizeof(probe_host), "%s", e->host);
+      } else if (endpoint_tcp_parse_host_port(e->ctrl_endpoint, probe_host, sizeof(probe_host), &probe_port) == 0) {
+        (void)probe_port;
+      } else if (e->endpoint &&
+                 endpoint_tcp_parse_host_port(e->endpoint, probe_host, sizeof(probe_host), &probe_port) == 0) {
+        (void)probe_port;
+      }
+
+      if (probe_host[0] && !host_is_local(probe_host)) {
+        if (!query_proc_ping_ok(b->ctx, e->ctrl_endpoint)) {
+          struct zcm_broker_entry *dead = e;
+          if (prev) prev->next = e->next;
+          else b->head = e->next;
+          e = e->next;
+          entry_free(dead);
+          removed++;
+          continue;
+        }
+      }
+    }
+
+    prev = e;
+    e = e->next;
+  }
+
+  return removed;
 }
 
 static void entry_refresh_metrics(struct zcm_broker *b, struct zcm_broker_entry *e) {
@@ -649,6 +707,12 @@ static void *broker_thread(void *arg) {
     zmq_msg_close(&part);
 
     (void)entry_prune_stale_local(b);
+    if (strcmp(cmd, "LIST_EX") == 0 ||
+        strcmp(cmd, "LIST") == 0 ||
+        strcmp(cmd, "LOOKUP") == 0 ||
+        strcmp(cmd, "INFO") == 0) {
+      (void)entry_prune_stale_remote_ctrl(b);
+    }
 
     if (strcmp(cmd, "REGISTER") == 0) {
       char name[256] = {0};
