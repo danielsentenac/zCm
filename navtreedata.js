@@ -35,22 +35,13 @@ var NAVTREE =
       [ "Value property", "md_docs_2message-format.html#autotoc_md8", null ],
       [ "Endianness", "md_docs_2message-format.html#autotoc_md9", null ]
     ] ],
-    [ "Tools", "md_docs_2tools.html", [
-      [ "zcm", "tool_zcm.html", null ],
-      [ "zcm_broker", "tool_zcm_broker.html", [
-        [ "zcm broker commands", "tool_zcm_broker.html#tool_zcm_broker_cli", null ],
-        [ "zcm_broker daemon", "tool_zcm_broker.html#tool_zcm_broker_daemon", null ]
-      ] ],
-      [ "zcm-proc", "tool_zcm_proc.html", null ]
-    ] ],
+    [ "Tools", "md_docs_2tools.html", "md_docs_2tools" ],
     [ "Tests", "md_docs_2tests.html", [
       [ "Running tests", "md_docs_2tests.html#autotoc_md16", null ],
       [ "Updating the list of tests", "md_docs_2tests.html#autotoc_md17", null ],
       [ "Test descriptions", "md_docs_2tests.html#autotoc_md18", null ]
     ] ],
-    [ "Examples", "md_docs_2examples.html", [
-      [ "zcm", "tool_zcm.html", null ]
-    ] ],
+    [ "Examples", "md_docs_2examples.html", "md_docs_2examples" ],
     [ "Data Structures", "annotated.html", [
       [ "Data Structures", "annotated.html", "annotated_dup" ],
       [ "Data Structure Index", "classes.html", null ],
@@ -78,5 +69,5 @@ var NAVTREEINDEX =
 "annotated.html"
 ];
 
-var SYNCONMSG = 'click to disable panel synchronisation';
-var SYNCOFFMSG = 'click to enable panel synchronisation';
+var SYNCONMSG = 'click to disable panel synchronization';
+var SYNCOFFMSG = 'click to enable panel synchronization';
