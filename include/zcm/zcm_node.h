@@ -155,6 +155,45 @@ int zcm_node_list(zcm_node_t *node, zcm_node_entry_t **out_entries, size_t *out_
 void zcm_node_list_free(zcm_node_entry_t *entries, size_t count);
 
 /**
+ * @brief Report runtime role/metric values for a registered name to the broker.
+ *
+ * Any numeric value can be set to `-1` when unknown/not applicable.
+ *
+ * @param node Node helper.
+ * @param name Registered logical name.
+ * @param role Role string (for example `PUB`, `SUB`, `PUB+SUB`, `EXTERNAL`).
+ * @param pub_port Published PUB port or `-1`.
+ * @param push_port Published PUSH port or `-1`.
+ * @param pub_bytes Last PUB payload byte size or `-1`.
+ * @param sub_bytes Last SUB payload byte size or `-1`.
+ * @param push_bytes Last PUSH payload byte size or `-1`.
+ * @param pull_bytes Last PULL payload byte size or `-1`.
+ * @return `0` on success, `-1` on failure.
+ */
+int zcm_node_report_metrics(zcm_node_t *node, const char *name, const char *role,
+                            int pub_port, int push_port,
+                            int pub_bytes, int sub_bytes,
+                            int push_bytes, int pull_bytes);
+
+/**
+ * @brief Handle a standard `ZCM_CMD` management message.
+ *
+ * Supported commands:
+ * - `PING` -> reply `REPLY(PONG,200)`
+ * - `KILL` -> reply `REPLY(OK,200)` and request process exit
+ * - `SHUTDOWN` -> reply `REPLY(OK,200)` and request process exit
+ *
+ * For unsupported commands, the function writes `ERROR(UNKNOWN_CMD,404)`.
+ *
+ * @param req Incoming request message.
+ * @param reply Output reply message (reset by this function when handled).
+ * @param out_should_exit Set to `1` when caller should terminate after sending reply.
+ * @return `1` when command was handled, `0` when request is not a `ZCM_CMD` control message,
+ *         `-1` on argument/internal errors.
+ */
+int zcm_node_handle_control_msg(zcm_msg_t *req, zcm_msg_t *reply, int *out_should_exit);
+
+/**
  * @brief Create a transport socket wrapper.
  *
  * @param ctx zCm context.

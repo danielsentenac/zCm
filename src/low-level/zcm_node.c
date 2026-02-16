@@ -3,6 +3,8 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
+#include <stdint.h>
 
 #include <zmq.h>
 
@@ -314,6 +316,112 @@ void zcm_node_list_free(zcm_node_entry_t *entries, size_t count) {
     free(entries[i].endpoint);
   }
   free(entries);
+}
+
+int zcm_node_report_metrics(zcm_node_t *node, const char *name, const char *role,
+                            int pub_port, int push_port,
+                            int pub_bytes, int sub_bytes,
+                            int push_bytes, int pull_bytes) {
+  if (!node || !name || !*name || !role || !*role) return -1;
+
+  void *sock = zmq_socket(zcm_context_zmq(node->ctx), ZMQ_REQ);
+  if (!sock) return -1;
+  set_req_socket_options(sock, 1000);
+  if (zmq_connect(sock, node->broker_endpoint) != 0) {
+    zmq_close(sock);
+    return -1;
+  }
+
+  char pub_port_s[32];
+  char push_port_s[32];
+  char pub_bytes_s[32];
+  char sub_bytes_s[32];
+  char push_bytes_s[32];
+  char pull_bytes_s[32];
+  snprintf(pub_port_s, sizeof(pub_port_s), "%d", pub_port);
+  snprintf(push_port_s, sizeof(push_port_s), "%d", push_port);
+  snprintf(pub_bytes_s, sizeof(pub_bytes_s), "%d", pub_bytes);
+  snprintf(sub_bytes_s, sizeof(sub_bytes_s), "%d", sub_bytes);
+  snprintf(push_bytes_s, sizeof(push_bytes_s), "%d", push_bytes);
+  snprintf(pull_bytes_s, sizeof(pull_bytes_s), "%d", pull_bytes);
+
+  if (zmq_send(sock, "METRICS", 7, ZMQ_SNDMORE) < 0) { zmq_close(sock); return -1; }
+  if (zmq_send(sock, name, strlen(name), ZMQ_SNDMORE) < 0) { zmq_close(sock); return -1; }
+  if (zmq_send(sock, role, strlen(role), ZMQ_SNDMORE) < 0) { zmq_close(sock); return -1; }
+  if (zmq_send(sock, pub_port_s, strlen(pub_port_s), ZMQ_SNDMORE) < 0) { zmq_close(sock); return -1; }
+  if (zmq_send(sock, push_port_s, strlen(push_port_s), ZMQ_SNDMORE) < 0) { zmq_close(sock); return -1; }
+  if (zmq_send(sock, pub_bytes_s, strlen(pub_bytes_s), ZMQ_SNDMORE) < 0) { zmq_close(sock); return -1; }
+  if (zmq_send(sock, sub_bytes_s, strlen(sub_bytes_s), ZMQ_SNDMORE) < 0) { zmq_close(sock); return -1; }
+  if (zmq_send(sock, push_bytes_s, strlen(push_bytes_s), ZMQ_SNDMORE) < 0) { zmq_close(sock); return -1; }
+  if (zmq_send(sock, pull_bytes_s, strlen(pull_bytes_s), 0) < 0) { zmq_close(sock); return -1; }
+
+  char reply[32] = {0};
+  int n = zmq_recv(sock, reply, sizeof(reply) - 1, 0);
+  zmq_close(sock);
+  if (n <= 0) return -1;
+  reply[n] = '\0';
+  return (strncmp(reply, "OK", 2) == 0) ? 0 : -1;
+}
+
+static int text_equals_nocase(const char *text, uint32_t len, const char *lit) {
+  if (!text || !lit) return 0;
+  size_t n = strlen(lit);
+  if (len != n) return 0;
+  return strncasecmp(text, lit, n) == 0;
+}
+
+int zcm_node_handle_control_msg(zcm_msg_t *req, zcm_msg_t *reply, int *out_should_exit) {
+  if (!req || !reply || !out_should_exit) return -1;
+  *out_should_exit = 0;
+
+  const char *type = zcm_msg_get_type(req);
+  if (!type || strcmp(type, "ZCM_CMD") != 0) return 0;
+
+  const char *cmd = NULL;
+  uint32_t cmd_len = 0;
+  int32_t code = 200;
+  int has_int_code = 0;
+
+  zcm_msg_rewind(req);
+  if (zcm_msg_get_text(req, &cmd, &cmd_len) == 0 &&
+      zcm_msg_get_int(req, &code) == 0 &&
+      zcm_msg_remaining(req) == 0) {
+    has_int_code = 1;
+  } else {
+    zcm_msg_rewind(req);
+    if (!(zcm_msg_get_text(req, &cmd, &cmd_len) == 0 &&
+          zcm_msg_remaining(req) == 0)) {
+      zcm_msg_reset(reply);
+      zcm_msg_set_type(reply, "ERROR");
+      zcm_msg_put_text(reply, "MALFORMED_CMD");
+      zcm_msg_put_int(reply, 400);
+      return 1;
+    }
+  }
+
+  (void)has_int_code;
+  (void)code;
+
+  zcm_msg_reset(reply);
+  if (text_equals_nocase(cmd, cmd_len, "PING")) {
+    zcm_msg_set_type(reply, "REPLY");
+    zcm_msg_put_text(reply, "PONG");
+    zcm_msg_put_int(reply, 200);
+    return 1;
+  }
+  if (text_equals_nocase(cmd, cmd_len, "KILL") ||
+      text_equals_nocase(cmd, cmd_len, "SHUTDOWN")) {
+    zcm_msg_set_type(reply, "REPLY");
+    zcm_msg_put_text(reply, "OK");
+    zcm_msg_put_int(reply, 200);
+    *out_should_exit = 1;
+    return 1;
+  }
+
+  zcm_msg_set_type(reply, "ERROR");
+  zcm_msg_put_text(reply, "UNKNOWN_CMD");
+  zcm_msg_put_int(reply, 404);
+  return 1;
 }
 
 zcm_socket_t *zcm_socket_new(zcm_context_t *ctx, zcm_socket_type_t type) {

@@ -152,6 +152,39 @@ static int run_daemon(const char *cfg_path) {
 
     if (!req_type) req_type = "";
 
+    {
+      int should_exit = 0;
+      int handled = zcm_node_handle_control_msg(req, reply, &should_exit);
+      if (handled < 0) {
+        fprintf(stderr, "control handler failed\n");
+        zcm_msg_free(reply);
+        zcm_msg_free(req);
+        zcm_proc_free(proc);
+        return 1;
+      }
+      if (handled == 1) {
+        const char *rt = zcm_msg_get_type(reply);
+        if (!rt) rt = "";
+        if (zcm_socket_send_msg(rep, reply) != 0) {
+          fprintf(stderr, "reply send failed\n");
+          zcm_msg_free(reply);
+          zcm_msg_free(req);
+          zcm_proc_free(proc);
+          return 1;
+        }
+        printf("[REP %s] sent control reply: msgType=%s exit=%d\n",
+               cfg.name, rt, should_exit ? 1 : 0);
+        fflush(stdout);
+        zcm_msg_free(reply);
+        zcm_msg_free(req);
+        if (should_exit) {
+          zcm_proc_free(proc);
+          return 0;
+        }
+        continue;
+      }
+    }
+
     const zcm_proc_type_handler_cfg_t *handler =
         zcm_proc_runtime_find_type_handler(&cfg, req_type);
     if (handler) {

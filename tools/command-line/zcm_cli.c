@@ -106,6 +106,14 @@ static int parse_int_reply(const char *text, int *out_value) {
   return 0;
 }
 
+static int endpoint_is_queryable(const char *endpoint) {
+  if (!endpoint || !*endpoint) return 0;
+  if (strncmp(endpoint, "tcp://", 6) == 0) return 1;
+  if (strncmp(endpoint, "ipc://", 6) == 0) return 1;
+  if (strncmp(endpoint, "inproc://", 9) == 0) return 1;
+  return 0;
+}
+
 static void extract_host_from_endpoint(const char *endpoint, char *out_host, size_t out_host_size) {
   if (!out_host || out_host_size == 0) return;
   snprintf(out_host, out_host_size, "-");
@@ -336,6 +344,11 @@ static int role_is_valid(const char *role) {
   return 1;
 }
 
+static int endpoint_is_sub_scheme(const char *endpoint) {
+  if (!endpoint) return 0;
+  return strncmp(endpoint, "sub://", 6) == 0;
+}
+
 static int reply_means_no_pub(const char *text, int code) {
   if (code != 404 || !text || !*text) return 0;
   return (strstr(text, "no PUB") != NULL ||
@@ -405,6 +418,14 @@ static void probe_node_role(zcm_context_t *ctx, zcm_node_t *node,
       snprintf(probe_endpoint, sizeof(probe_endpoint), "%s", info_ctrl_ep);
     } else if (info_pid <= 0 && info_host[0] == '\0') {
       snprintf(out_role, out_role_size, "EXTERNAL");
+      return;
+    }
+  }
+
+  {
+    const char *ep_for_role = info_ep[0] ? info_ep : endpoint;
+    if (endpoint_is_sub_scheme(ep_for_role)) {
+      snprintf(out_role, out_role_size, "SUB");
       return;
     }
   }
@@ -618,7 +639,213 @@ static void print_names_broker_offline(const char *endpoint) {
          (int)w_pull_bytes, pull_bytes);
 }
 
+static int recv_text_frame(void *sock, char *out, size_t out_size) {
+  if (!sock || !out || out_size == 0) return -1;
+  int n = zmq_recv(sock, out, out_size - 1, 0);
+  if (n < 0) return -1;
+  out[n] = '\0';
+  return 0;
+}
+
+static int do_names_broker_ex(const char *endpoint) {
+  int rc = 1;
+  zcm_context_t *ctx = zcm_context_new();
+  void *req = NULL;
+  zcm_node_entry_t *entries = NULL;
+  names_row_info_t *rows = NULL;
+  size_t count = 0;
+
+  if (!ctx || !endpoint || !*endpoint) goto out;
+  req = zmq_socket(zcm_context_zmq(ctx), ZMQ_REQ);
+  if (!req) goto out;
+
+  int timeout_ms = 1000;
+  int linger = 0;
+  int immediate = 1;
+  zmq_setsockopt(req, ZMQ_RCVTIMEO, &timeout_ms, sizeof(timeout_ms));
+  zmq_setsockopt(req, ZMQ_SNDTIMEO, &timeout_ms, sizeof(timeout_ms));
+  zmq_setsockopt(req, ZMQ_LINGER, &linger, sizeof(linger));
+  zmq_setsockopt(req, ZMQ_IMMEDIATE, &immediate, sizeof(immediate));
+
+  if (zmq_connect(req, endpoint) != 0) goto out;
+  if (zmq_send(req, "LIST_EX", 7, 0) < 0) goto out;
+
+  char status[16] = {0};
+  if (recv_text_frame(req, status, sizeof(status)) != 0) goto out;
+  if (strcmp(status, "OK") != 0) goto out;
+
+  int raw_count = 0;
+  int n = zmq_recv(req, &raw_count, sizeof(raw_count), 0);
+  if (n != (int)sizeof(raw_count) || raw_count < 0 || raw_count > 100000) goto out;
+  count = (size_t)raw_count;
+
+  if (count > 0) {
+    entries = (zcm_node_entry_t *)calloc(count, sizeof(*entries));
+    rows = (names_row_info_t *)calloc(count, sizeof(*rows));
+    if (!entries || !rows) goto out;
+  }
+
+  for (size_t i = 0; i < count; i++) {
+    char name[256] = {0};
+    char ep[512] = {0};
+    char host[256] = {0};
+    char role[64] = {0};
+    char pub_port[32] = {0};
+    char push_port[32] = {0};
+    char pub_bytes[32] = {0};
+    char sub_bytes[32] = {0};
+    char push_bytes[32] = {0};
+    char pull_bytes[32] = {0};
+    if (recv_text_frame(req, name, sizeof(name)) != 0) goto out;
+    if (recv_text_frame(req, ep, sizeof(ep)) != 0) goto out;
+    if (recv_text_frame(req, host, sizeof(host)) != 0) goto out;
+    if (recv_text_frame(req, role, sizeof(role)) != 0) goto out;
+    if (recv_text_frame(req, pub_port, sizeof(pub_port)) != 0) goto out;
+    if (recv_text_frame(req, push_port, sizeof(push_port)) != 0) goto out;
+    if (recv_text_frame(req, pub_bytes, sizeof(pub_bytes)) != 0) goto out;
+    if (recv_text_frame(req, sub_bytes, sizeof(sub_bytes)) != 0) goto out;
+    if (recv_text_frame(req, push_bytes, sizeof(push_bytes)) != 0) goto out;
+    if (recv_text_frame(req, pull_bytes, sizeof(pull_bytes)) != 0) goto out;
+
+    entries[i].name = strdup(name);
+    entries[i].endpoint = strdup(ep);
+    if (!entries[i].name || !entries[i].endpoint) goto out;
+
+    if (host[0]) {
+      snprintf(rows[i].host, sizeof(rows[i].host), "%s", host);
+    } else {
+      extract_host_from_endpoint(ep, rows[i].host, sizeof(rows[i].host));
+    }
+    resolve_hostname_if_ip(rows[i].host, sizeof(rows[i].host));
+
+    if (role[0]) snprintf(rows[i].role, sizeof(rows[i].role), "%s", role);
+    else snprintf(rows[i].role, sizeof(rows[i].role), "UNKNOWN");
+
+    rows[i].pub_port = -1;
+    rows[i].push_port = -1;
+    rows[i].pub_bytes = -1;
+    rows[i].sub_bytes = -1;
+    rows[i].push_bytes = -1;
+    rows[i].pull_bytes = -1;
+    (void)parse_int_reply(pub_port, &rows[i].pub_port);
+    (void)parse_int_reply(push_port, &rows[i].push_port);
+    (void)parse_int_reply(pub_bytes, &rows[i].pub_bytes);
+    (void)parse_int_reply(sub_bytes, &rows[i].sub_bytes);
+    (void)parse_int_reply(push_bytes, &rows[i].push_bytes);
+    (void)parse_int_reply(pull_bytes, &rows[i].pull_bytes);
+  }
+
+  {
+    size_t w_name = strlen("NAME");
+    size_t w_endpoint = strlen("ENDPOINT");
+    size_t w_host = strlen("HOST");
+    size_t w_role = strlen("ROLE");
+    size_t w_pub_port = strlen("PUB_PORT");
+    size_t w_push_port = strlen("PUSH_PORT");
+    size_t w_pub_bytes = strlen("PUB_BYTES");
+    size_t w_sub_bytes = strlen("SUB_BYTES");
+    size_t w_push_bytes = strlen("PUSH_BYTES");
+    size_t w_pull_bytes = strlen("PULL_BYTES");
+
+    for (size_t i = 0; i < count; i++) {
+      size_t name_len = strlen(entries[i].name);
+      if (name_len > w_name) w_name = name_len;
+      size_t ep_len = strlen(entries[i].endpoint);
+      if (ep_len > w_endpoint) w_endpoint = ep_len;
+      size_t host_len = strlen(rows[i].host);
+      if (host_len > w_host) w_host = host_len;
+      size_t role_len = strlen(rows[i].role);
+      if (role_len > w_role) w_role = role_len;
+
+      char num_text[16];
+      format_int_or_dash((rows[i].pub_port > 0) ? rows[i].pub_port : -1, num_text, sizeof(num_text));
+      if (strlen(num_text) > w_pub_port) w_pub_port = strlen(num_text);
+      format_int_or_dash((rows[i].push_port > 0) ? rows[i].push_port : -1, num_text, sizeof(num_text));
+      if (strlen(num_text) > w_push_port) w_push_port = strlen(num_text);
+      format_int_or_dash(rows[i].pub_bytes, num_text, sizeof(num_text));
+      if (strlen(num_text) > w_pub_bytes) w_pub_bytes = strlen(num_text);
+      format_int_or_dash(rows[i].sub_bytes, num_text, sizeof(num_text));
+      if (strlen(num_text) > w_sub_bytes) w_sub_bytes = strlen(num_text);
+      format_int_or_dash(rows[i].push_bytes, num_text, sizeof(num_text));
+      if (strlen(num_text) > w_push_bytes) w_push_bytes = strlen(num_text);
+      format_int_or_dash(rows[i].pull_bytes, num_text, sizeof(num_text));
+      if (strlen(num_text) > w_pull_bytes) w_pull_bytes = strlen(num_text);
+    }
+
+    printf("%-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s\n",
+           (int)w_name, "NAME",
+           (int)w_endpoint, "ENDPOINT",
+           (int)w_host, "HOST",
+           (int)w_role, "ROLE",
+           (int)w_pub_port, "PUB_PORT",
+           (int)w_push_port, "PUSH_PORT",
+           (int)w_pub_bytes, "PUB_BYTES",
+           (int)w_sub_bytes, "SUB_BYTES",
+           (int)w_push_bytes, "PUSH_BYTES",
+           (int)w_pull_bytes, "PULL_BYTES");
+    print_repeat_char('-', w_name);
+    printf("  ");
+    print_repeat_char('-', w_endpoint);
+    printf("  ");
+    print_repeat_char('-', w_host);
+    printf("  ");
+    print_repeat_char('-', w_role);
+    printf("  ");
+    print_repeat_char('-', w_pub_port);
+    printf("  ");
+    print_repeat_char('-', w_push_port);
+    printf("  ");
+    print_repeat_char('-', w_pub_bytes);
+    printf("  ");
+    print_repeat_char('-', w_sub_bytes);
+    printf("  ");
+    print_repeat_char('-', w_push_bytes);
+    printf("  ");
+    print_repeat_char('-', w_pull_bytes);
+    printf("\n");
+
+    for (size_t i = 0; i < count; i++) {
+      char pub_port_text[16];
+      char push_port_text[16];
+      char pub_bytes_text[16];
+      char sub_bytes_text[16];
+      char push_bytes_text[16];
+      char pull_bytes_text[16];
+      format_int_or_dash((rows[i].pub_port > 0) ? rows[i].pub_port : -1, pub_port_text, sizeof(pub_port_text));
+      format_int_or_dash((rows[i].push_port > 0) ? rows[i].push_port : -1, push_port_text, sizeof(push_port_text));
+      format_int_or_dash(rows[i].pub_bytes, pub_bytes_text, sizeof(pub_bytes_text));
+      format_int_or_dash(rows[i].sub_bytes, sub_bytes_text, sizeof(sub_bytes_text));
+      format_int_or_dash(rows[i].push_bytes, push_bytes_text, sizeof(push_bytes_text));
+      format_int_or_dash(rows[i].pull_bytes, pull_bytes_text, sizeof(pull_bytes_text));
+
+      printf("%-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s\n",
+             (int)w_name, entries[i].name,
+             (int)w_endpoint, entries[i].endpoint,
+             (int)w_host, rows[i].host,
+             (int)w_role, rows[i].role,
+             (int)w_pub_port, pub_port_text,
+             (int)w_push_port, push_port_text,
+             (int)w_pub_bytes, pub_bytes_text,
+             (int)w_sub_bytes, sub_bytes_text,
+             (int)w_push_bytes, push_bytes_text,
+             (int)w_pull_bytes, pull_bytes_text);
+    }
+  }
+
+  rc = 0;
+
+out:
+  if (entries) zcm_node_list_free(entries, count);
+  free(rows);
+  if (req) zmq_close(req);
+  if (ctx) zcm_context_free(ctx);
+  return rc;
+}
+
 static int do_names(const char *endpoint) {
+  int ex_rc = do_names_broker_ex(endpoint);
+  if (ex_rc == 0) return 0;
+
   int rc = 1;
   zcm_context_t *ctx = zcm_context_new();
   if (!ctx) return 1;
@@ -1348,56 +1575,121 @@ out:
   return rc;
 }
 
+static int send_kill_msg(zcm_context_t *ctx, const char *target_ep) {
+  if (!ctx || !target_ep || !*target_ep) return -1;
+  if (!endpoint_is_queryable(target_ep)) return -1;
+  int rc = -1;
+  zcm_socket_t *req = zcm_socket_new(ctx, ZCM_SOCK_REQ);
+  zcm_msg_t *msg = NULL;
+  zcm_msg_t *reply = NULL;
+  if (!req) return -1;
+  if (zcm_socket_connect(req, target_ep) != 0) goto out;
+  zcm_socket_set_timeouts(req, 1000);
+
+  msg = zcm_msg_new();
+  if (!msg) goto out;
+  zcm_msg_set_type(msg, "ZCM_CMD");
+  if (zcm_msg_put_text(msg, "KILL") != 0) goto out;
+  if (zcm_msg_put_int(msg, 200) != 0) goto out;
+  if (zcm_socket_send_msg(req, msg) != 0) goto out;
+
+  reply = zcm_msg_new();
+  if (!reply) goto out;
+  if (zcm_socket_recv_msg(req, reply) != 0) goto out;
+
+  {
+    const char *text = NULL;
+    uint32_t text_len = 0;
+    int32_t code = 0;
+    zcm_msg_rewind(reply);
+    if (zcm_msg_get_text(reply, &text, &text_len) == 0 &&
+        zcm_msg_get_int(reply, &code) == 0 &&
+        zcm_msg_remaining(reply) == 0) {
+      if (code == 200 &&
+          text_len == strlen("OK") &&
+          strncmp(text, "OK", text_len) == 0) {
+        rc = 0;
+      }
+    }
+  }
+
+out:
+  if (reply) zcm_msg_free(reply);
+  if (msg) zcm_msg_free(msg);
+  if (req) zcm_socket_free(req);
+  return rc;
+}
+
+static int send_shutdown_bytes(zcm_context_t *ctx, const char *target_ep) {
+  if (!ctx || !target_ep || !*target_ep) return -1;
+  if (!endpoint_is_queryable(target_ep)) return -1;
+  int rc = -1;
+  zcm_socket_t *req = zcm_socket_new(ctx, ZCM_SOCK_REQ);
+  if (!req) return -1;
+  if (zcm_socket_connect(req, target_ep) != 0) goto out;
+  zcm_socket_set_timeouts(req, 1000);
+  if (zcm_socket_send_bytes(req, "SHUTDOWN", 8) != 0) goto out;
+
+  {
+    char reply[32] = {0};
+    size_t n = 0;
+    if (zcm_socket_recv_bytes(req, reply, sizeof(reply) - 1, &n) != 0 || n == 0) goto out;
+    reply[n] = '\0';
+    if (strcmp(reply, "OK") == 0) rc = 0;
+  }
+
+out:
+  if (req) zcm_socket_free(req);
+  return rc;
+}
+
 static int do_kill(const char *endpoint, const char *name) {
   int rc = 1;
   zcm_context_t *ctx = zcm_context_new();
   zcm_node_t *node = NULL;
-  zcm_socket_t *req = NULL;
 
   if (!ctx) return 1;
   node = zcm_node_new(ctx, endpoint);
   if (!node) goto out;
 
+  char data_ep[512] = {0};
   char ctrl_ep[512] = {0};
   char host[256] = {0};
   int pid = 0;
-  if (zcm_node_info(node, name, NULL, 0, ctrl_ep, sizeof(ctrl_ep), host, sizeof(host), &pid) != 0) {
+  if (zcm_node_info(node, name,
+                    data_ep, sizeof(data_ep),
+                    ctrl_ep, sizeof(ctrl_ep),
+                    host, sizeof(host), &pid) != 0) {
     fprintf(stderr, "zcm: kill failed (no info for %s)\n", name);
     goto out;
   }
-  if (ctrl_ep[0] == '\0') {
-    fprintf(stderr, "zcm: kill failed (no control endpoint for %s)\n", name);
-    goto out;
-  }
 
-  req = zcm_socket_new(ctx, ZCM_SOCK_REQ);
-  if (!req) goto out;
-  if (zcm_socket_connect(req, ctrl_ep) != 0) {
-    fprintf(stderr, "zcm: kill failed (connect control endpoint)\n");
-    goto out;
-  }
-  zcm_socket_set_timeouts(req, 1000);
-  if (zcm_socket_send_bytes(req, "SHUTDOWN", 8) != 0) {
-    fprintf(stderr, "zcm: kill failed (send shutdown)\n");
-    goto out;
-  }
+  {
+    const char *targets[2] = {NULL, NULL};
+    int target_count = 0;
+    if (ctrl_ep[0]) targets[target_count++] = ctrl_ep;
+    if (data_ep[0] && (!ctrl_ep[0] || strcmp(data_ep, ctrl_ep) != 0)) {
+      targets[target_count++] = data_ep;
+    }
+    if (target_count == 0) {
+      fprintf(stderr, "zcm: kill failed (no reachable endpoint for %s)\n", name);
+      goto out;
+    }
 
-  char reply[32] = {0};
-  size_t n = 0;
-  if (zcm_socket_recv_bytes(req, reply, sizeof(reply) - 1, &n) != 0 || n == 0) {
-    fprintf(stderr, "zcm: kill failed (no reply)\n");
-    goto out;
+    for (int i = 0; i < target_count; i++) {
+      if (send_kill_msg(ctx, targets[i]) == 0) {
+        rc = 0;
+        goto out;
+      }
+      if (i == 0 && send_shutdown_bytes(ctx, targets[i]) == 0) {
+        rc = 0;
+        goto out;
+      }
+    }
   }
-  reply[n] = '\0';
-  if (strcmp(reply, "OK") != 0) {
-    fprintf(stderr, "zcm: kill failed (reply=%s)\n", reply);
-    goto out;
-  }
-
-  rc = 0;
+  fprintf(stderr, "zcm: kill failed (node did not acknowledge KILL)\n");
 
 out:
-  if (req) zcm_socket_free(req);
   if (node) zcm_node_free(node);
   zcm_context_free(ctx);
   return rc;

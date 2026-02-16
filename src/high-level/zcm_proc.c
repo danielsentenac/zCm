@@ -323,12 +323,34 @@ static int load_domain_info(char **broker_ep, char **host_out, int *first_port, 
 static void *ctrl_thread_main(void *arg) {
   struct zcm_proc *proc = (struct zcm_proc *)arg;
   for (;;) {
-    char ctrl_buf[64] = {0};
+    char ctrl_buf[512] = {0};
     size_t ctrl_len = 0;
     if (proc->stop) break;
     if (zcm_socket_recv_bytes(proc->ctrl, ctrl_buf, sizeof(ctrl_buf) - 1, &ctrl_len) == 0) {
+      int handled_control_msg = 0;
+      zcm_msg_t *req = zcm_msg_new();
+      zcm_msg_t *reply = zcm_msg_new();
+      if (req && reply && zcm_msg_from_bytes(req, ctrl_buf, ctrl_len) == 0) {
+        int should_exit = 0;
+        int handled = zcm_node_handle_control_msg(req, reply, &should_exit);
+        if (handled == 1) {
+          handled_control_msg = 1;
+          if (zcm_socket_send_msg(proc->ctrl, reply) != 0) {
+            fprintf(stderr, "zcm_proc: control reply send failed\n");
+          } else if (should_exit) {
+            zcm_node_unregister(proc->node, proc->name);
+            zcm_msg_free(reply);
+            zcm_msg_free(req);
+            exit(0);
+          }
+        }
+      }
+      if (reply) zcm_msg_free(reply);
+      if (req) zcm_msg_free(req);
+      if (handled_control_msg) continue;
+
       ctrl_buf[ctrl_len] = '\0';
-      if (strcmp(ctrl_buf, "SHUTDOWN") == 0) {
+      if (strcmp(ctrl_buf, "SHUTDOWN") == 0 || strcmp(ctrl_buf, "KILL") == 0) {
         const char *ok = "OK";
         zcm_socket_send_bytes(proc->ctrl, ok, strlen(ok));
         zcm_node_unregister(proc->node, proc->name);
