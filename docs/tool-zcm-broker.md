@@ -25,6 +25,8 @@ Run broker main loop:
 ```
 
 Broker resolution for `zcm_broker`:
+- Optional explicit override:
+  - `ZCMBROKER` or `ZCMBROKER_ENDPOINT` (takes priority)
 - `ZCMDOMAIN` selects the domain
 - `ZCmDomains` is read from:
   - `$ZCMDOMAIN_DATABASE` or `$ZCMMGR`, else
@@ -46,3 +48,9 @@ Broker resolution for `zcm_broker`:
   - `<domain> <nameserver-host> <nameserver-port> <first-port> <range-size> <repository>`
   - Example:
     - `myplace 127.0.0.1 5555 7000 100 repo`
+
+Broker startup behavior:
+- `zcm_broker` binds on the selected port using the local machine address.
+- After successful startup, it updates the current `ZCMDOMAIN` row in `ZCmDomains`:
+  - nameserver host -> detected local IPv4/hostname
+  - nameserver port -> active broker port

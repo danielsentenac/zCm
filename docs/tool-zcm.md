@@ -9,7 +9,7 @@ List registered processes:
 - `ENDPOINT`: data endpoint registered in broker
 - `HOST`: node host (from broker metadata when available, else parsed from endpoint)
   - if `HOST` is an IP, CLI tries reverse-DNS resolution and prints hostname when PTR exists
-- `ROLE`: inferred data role (`BROKER`, `PUB`, `SUB`, `PUSH`, `PULL`, combinations, `EXTERNAL`, `BROKER_OFFLINE`)
+- `ROLE`: inferred data role (`BROKER`, `PUB`, `SUB`, `PUSH`, `PULL`, combinations, `EXTERNAL`)
 - `PUB_PORT`: first publisher data port exposed by node (`-` when unavailable)
 - `PUSH_PORT`: first pusher data port exposed by node (`-` when unavailable)
 - `PUB_BYTES`: publisher payload byte count
@@ -18,10 +18,8 @@ List registered processes:
 - `PULL_BYTES`: puller last received payload byte count
 
 `zcm names` behavior details:
-- If broker is not reachable, output is still deterministic:
-  - one row for `zcmbroker`
-  - role `BROKER_OFFLINE`
-  - current broker endpoint in `ENDPOINT`
+- If broker is not reachable, the command prints only:
+  - `zcm: broker not reachable`
 - Nodes registered without control metadata (plain `REGISTER`) are shown as `EXTERNAL`
   without probing `DATA_*` commands (prevents names timeout on non-`zcm_proc` nodes).
 - Nodes exposing control metadata (`REGISTER_EX` + `DATA_*` commands) can show full
@@ -68,6 +66,8 @@ External nodes:
   and byte/port columns stay `-`.
 
 Broker resolution for `zcm` CLI and broker:
+- Optional explicit override:
+  - `ZCMBROKER` or `ZCMBROKER_ENDPOINT` (takes priority)
 - `ZCMDOMAIN` selects the domain
 - `ZCmDomains` is read from:
   - `$ZCMDOMAIN_DATABASE` or `$ZCMMGR`, else
@@ -85,6 +85,8 @@ Shared runtime variables (`zcm`, `zcm_broker`, `zcm_proc`):
 
 | Variable | Meaning |
 | --- | --- |
+| `ZCMBROKER` | Explicit broker endpoint override (for example `tcp://host:5555`), highest priority. |
+| `ZCMBROKER_ENDPOINT` | Alias of `ZCMBROKER`. |
 | `ZCMDOMAIN` | Domain name to select the row in `ZCmDomains` (required). |
 | `ZCMDOMAIN_DATABASE` | Directory containing `ZCmDomains` (highest priority). |
 | `ZCMMGR` | Alternative directory containing `ZCmDomains`. |
