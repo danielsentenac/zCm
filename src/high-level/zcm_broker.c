@@ -410,7 +410,7 @@ static int query_proc_command_once(zcm_context_t *ctx, const char *endpoint,
   int rc = -1;
   zcm_socket_t *req = zcm_socket_new(ctx, ZCM_SOCK_REQ);
   if (!req) return -1;
-  zcm_socket_set_timeouts(req, 400);
+  zcm_socket_set_timeouts(req, 250);
   if (zcm_socket_connect(req, endpoint) != 0) goto out;
 
   zcm_msg_t *q = zcm_msg_new();
@@ -537,13 +537,38 @@ static void entry_refresh_metrics(struct zcm_broker *b, struct zcm_broker_entry 
     return;
   }
 
+  /*
+   * Avoid synchronous cross-host probing on the broker request thread.
+   * Remote nodes should report metrics via METRICS; probing them here can stall
+   * LIST_EX when a remote process disappears without unregistering.
+   */
+  {
+    char probe_host[256] = {0};
+    int probe_port = 0;
+    if (e->host && e->host[0]) {
+      snprintf(probe_host, sizeof(probe_host), "%s", e->host);
+    } else if (e->endpoint &&
+               endpoint_tcp_parse_host_port(e->endpoint, probe_host, sizeof(probe_host), &probe_port) == 0) {
+      (void)probe_port;
+    }
+    if (probe_host[0] && !host_is_local(probe_host)) {
+      return;
+    }
+  }
+
   char text[128] = {0};
   int code = 0;
+  int role_probe_ok = 0;
 
   if (query_proc_command_with_ctrl_fallback(b->ctx, e->endpoint, e->ctrl_endpoint,
                                             "DATA_ROLE", text, sizeof(text), &code) == 0 &&
       code == 200 && role_is_valid(text)) {
     snprintf(e->role, sizeof(e->role), "%s", text);
+    role_probe_ok = 1;
+  }
+
+  if (!role_probe_ok) {
+    return;
   }
 
   if (query_proc_command_with_ctrl_fallback(b->ctx, e->endpoint, e->ctrl_endpoint,

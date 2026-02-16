@@ -218,6 +218,13 @@ if(ZCM_BUILD_TESTS)
     RUNTIME_OUTPUT_DIRECTORY ${ZCM_TEST_OUTPUT_DIR}
   )
 
+  add_executable(zcm_broker_list_ex_remote_stale tests/node/zcm_broker_list_ex_remote_stale.c)
+  target_link_libraries(zcm_broker_list_ex_remote_stale PRIVATE zcm_lib)
+  add_test(NAME zcm_broker_list_ex_remote_stale COMMAND zcm_broker_list_ex_remote_stale)
+  set_target_properties(zcm_broker_list_ex_remote_stale PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${ZCM_TEST_OUTPUT_DIR}
+  )
+
   add_executable(zcm_proc_reannounce tests/node/zcm_proc_reannounce.c)
   target_link_libraries(zcm_proc_reannounce PRIVATE zcm_lib)
   add_test(NAME zcm_proc_reannounce COMMAND zcm_proc_reannounce)

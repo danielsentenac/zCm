@@ -24,6 +24,8 @@ List registered processes:
   without probing `DATA_*` commands (prevents names timeout on non-`zcm_proc` nodes).
 - Nodes exposing control metadata (`REGISTER_EX` + `DATA_*` commands) can show full
   `ROLE`, `*_PORT`, and `*_BYTES` values.
+- Broker-side metric probing is local-host only; stale remote registrations do not
+  block `LIST_EX` responses (remote nodes should report metrics via `METRICS`).
 
 Kill (shutdown) a registered process:
 ```bash

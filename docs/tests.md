@@ -32,6 +32,7 @@ This document describes the intent and coverage of the current test suite.
   ./build/tests/zcm_msg_vectors
   ./build/tests/zcm_node_list
   ./build/tests/zcm_node_ctrl_fallback
+  ./build/tests/zcm_broker_list_ex_remote_stale
   ./build/tests/zcm_node_unique_name
   ./build/tests/zcm_node_prune_dead
   ./build/tests/zcm_cli_ping_fallback
@@ -101,6 +102,14 @@ This document describes the intent and coverage of the current test suite.
 - Covers edge cases where incrementing the data port would overflow.
 
 **Files:** `tests/node/zcm_node_ctrl_fallback.c`
+
+### `zcm_broker_list_ex_remote_stale`
+**Purpose:** broker responsiveness when a remote registered control endpoint is stale.
+- Registers a remote-host node entry with dead control endpoint.
+- Calls broker `LIST_EX` directly and verifies timely `OK` reply.
+- Ensures stale remote entries do not block broker request handling.
+
+**Files:** `tests/node/zcm_broker_list_ex_remote_stale.c`
 
 ### `zcm_node_unique_name`
 **Purpose:** enforce unique process names across different owners.
