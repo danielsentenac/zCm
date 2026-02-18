@@ -28,20 +28,23 @@ var NAVTREE =
     [ "Architecture", "index.html#autotoc_md1", null ],
     [ "Scope", "index.html#autotoc_md2", null ],
     [ "Build", "index.html#autotoc_md3", null ],
-    [ "API Modules", "md_docs_2modules.html", null ],
-    [ "Message Format", "md_docs_2message-format.html", [
-      [ "Envelope", "md_docs_2message-format.html#autotoc_md6", null ],
-      [ "Typed items", "md_docs_2message-format.html#autotoc_md7", null ],
-      [ "Value property", "md_docs_2message-format.html#autotoc_md8", null ],
-      [ "Endianness", "md_docs_2message-format.html#autotoc_md9", null ]
+    [ "API Modules", "md_docs_modules.html", [
+      [ "Public structures and where they are implemented", "md_docs_modules.html#autotoc_md5", null ]
     ] ],
-    [ "Tools", "md_docs_2tools.html", "md_docs_2tools" ],
-    [ "Tests", "md_docs_2tests.html", [
-      [ "Running tests", "md_docs_2tests.html#autotoc_md16", null ],
-      [ "Updating the list of tests", "md_docs_2tests.html#autotoc_md17", null ],
-      [ "Test descriptions", "md_docs_2tests.html#autotoc_md18", null ]
+    [ "Message Format", "md_docs_message_format.html", [
+      [ "C API structures", "md_docs_message_format.html#autotoc_md7", null ],
+      [ "Envelope", "md_docs_message_format.html#autotoc_md8", null ],
+      [ "Typed items", "md_docs_message_format.html#autotoc_md9", null ],
+      [ "Value property", "md_docs_message_format.html#autotoc_md10", null ],
+      [ "Endianness", "md_docs_message_format.html#autotoc_md11", null ]
     ] ],
-    [ "Examples", "md_docs_2examples.html", "md_docs_2examples" ],
+    [ "Tools", "md_docs_tools.html", "md_docs_tools" ],
+    [ "Tests", "md_docs_tests.html", [
+      [ "Running tests", "md_docs_tests.html#autotoc_md18", null ],
+      [ "Updating the list of tests", "md_docs_tests.html#autotoc_md19", null ],
+      [ "Test descriptions", "md_docs_tests.html#autotoc_md20", null ]
+    ] ],
+    [ "Examples", "md_docs_examples.html", "md_docs_examples" ],
     [ "Data Structures", "annotated.html", [
       [ "Data Structures", "annotated.html", "annotated_dup" ],
       [ "Data Structure Index", "classes.html", null ],
@@ -69,5 +72,5 @@ var NAVTREEINDEX =
 "annotated.html"
 ];
 
-var SYNCONMSG = 'click to disable panel synchronization';
-var SYNCOFFMSG = 'click to enable panel synchronization';
+var SYNCONMSG = 'click to disable panel synchronisation';
+var SYNCOFFMSG = 'click to enable panel synchronisation';
