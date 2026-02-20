@@ -424,7 +424,8 @@ static void probe_node_role(zcm_context_t *ctx, zcm_node_t *node,
     }
     if (info_ctrl_ep[0]) {
       snprintf(probe_endpoint, sizeof(probe_endpoint), "%s", info_ctrl_ep);
-    } else if (info_pid <= 0 && info_host[0] == '\0') {
+    } else if (info_pid <= 0 && info_host[0] == '\0' &&
+               !endpoint_is_sub_scheme(info_ep[0] ? info_ep : endpoint)) {
       snprintf(out_role, out_role_size, "EXTERNAL");
       return;
     }
@@ -434,6 +435,19 @@ static void probe_node_role(zcm_context_t *ctx, zcm_node_t *node,
     const char *ep_for_role = info_ep[0] ? info_ep : endpoint;
     if (endpoint_is_sub_scheme(ep_for_role)) {
       snprintf(out_role, out_role_size, "SUB");
+      if (endpoint_is_queryable(probe_endpoint)) {
+        char text[128] = {0};
+        int code = 0;
+        if (query_proc_command_with_ctrl_fallback(ctx, node, name, probe_endpoint,
+                                                  "DATA_PAYLOAD_BYTES_SUB",
+                                                  text, sizeof(text), &code) == 0 &&
+            code == 200) {
+          int bytes = -1;
+          if (parse_int_reply(text, &bytes) == 0) {
+            *out_sub_bytes = bytes;
+          }
+        }
+      }
       return;
     }
   }
@@ -547,7 +561,9 @@ static void probe_node_role(zcm_context_t *ctx, zcm_node_t *node,
 
 typedef struct names_row_info {
   char host[256];
-  char role[32];
+  char role[64];
+  char endpoint_display[512];
+  char role_display[512];
   int pub_port;
   int push_port;
   int pub_bytes;
@@ -555,6 +571,221 @@ typedef struct names_row_info {
   int push_bytes;
   int pull_bytes;
 } names_row_info_t;
+
+static int endpoint_sub_to_tcp(const char *endpoint, char *out, size_t out_size) {
+  if (!endpoint || !out || out_size == 0) return -1;
+  if (!endpoint_is_sub_scheme(endpoint)) return -1;
+  if (snprintf(out, out_size, "tcp://%s", endpoint + 6) >= (int)out_size) return -1;
+  return 0;
+}
+
+static int endpoint_normalize_for_matching(const char *endpoint, char *out, size_t out_size) {
+  if (!endpoint || !*endpoint || !out || out_size == 0) return -1;
+  if (endpoint_is_sub_scheme(endpoint)) {
+    return endpoint_sub_to_tcp(endpoint, out, out_size);
+  }
+  if (snprintf(out, out_size, "%s", endpoint) >= (int)out_size) return -1;
+  return 0;
+}
+
+static int endpoint_parse_port(const char *endpoint, int *out_port) {
+  if (!endpoint || !out_port) return -1;
+
+  const char *p = strstr(endpoint, "://");
+  p = p ? (p + 3) : endpoint;
+  if (!*p) return -1;
+
+  const char *port_text = NULL;
+  if (*p == '[') {
+    const char *end = strchr(p + 1, ']');
+    if (!end || end[1] != ':') return -1;
+    port_text = end + 2;
+  } else {
+    const char *last_colon = strrchr(p, ':');
+    if (!last_colon || !last_colon[1]) return -1;
+    port_text = last_colon + 1;
+  }
+
+  char *endptr = NULL;
+  long v = strtol(port_text, &endptr, 10);
+  if (!endptr || *endptr != '\0') return -1;
+  if (v < 1 || v > 65535) return -1;
+  *out_port = (int)v;
+  return 0;
+}
+
+static int csv_contains_token(const char *csv, const char *token) {
+  if (!csv || !token || !*token) return 0;
+  size_t token_len = strlen(token);
+  const char *p = csv;
+  while (p && *p) {
+    const char *next = strchr(p, ',');
+    size_t len = next ? (size_t)(next - p) : strlen(p);
+    if (len == token_len && strncmp(p, token, len) == 0) return 1;
+    if (!next) break;
+    p = next + 1;
+  }
+  return 0;
+}
+
+static void csv_append_token(char *csv, size_t csv_size, const char *token) {
+  if (!csv || csv_size == 0 || !token || !*token) return;
+  if (csv_contains_token(csv, token)) return;
+
+  size_t cur = strlen(csv);
+  if (cur > 0) {
+    if (cur + 1 >= csv_size) return;
+    csv[cur++] = ',';
+    csv[cur] = '\0';
+  }
+  strncat(csv, token, csv_size - strlen(csv) - 1);
+}
+
+static void role_append_token(char *role, size_t role_size, const char *token) {
+  if (!role || role_size == 0 || !token || !*token) return;
+  size_t cur = strlen(role);
+  if (cur > 0) {
+    if (cur + 1 >= role_size) return;
+    role[cur++] = '+';
+    role[cur] = '\0';
+  }
+  strncat(role, token, role_size - strlen(role) - 1);
+}
+
+static void build_role_with_sub_targets(const char *base_role, const char *targets_csv,
+                                        char *out_role, size_t out_role_size) {
+  if (!out_role || out_role_size == 0) return;
+  out_role[0] = '\0';
+
+  const char *role = (base_role && base_role[0]) ? base_role : "SUB";
+  if (!targets_csv || !*targets_csv) {
+    snprintf(out_role, out_role_size, "%s", role);
+    return;
+  }
+
+  char role_copy[128] = {0};
+  snprintf(role_copy, sizeof(role_copy), "%s", role);
+
+  int replaced_sub = 0;
+  char *saveptr = NULL;
+  for (char *tok = strtok_r(role_copy, "+", &saveptr);
+       tok;
+       tok = strtok_r(NULL, "+", &saveptr)) {
+    if (strcmp(tok, "SUB") == 0) {
+      char decorated[256] = {0};
+      snprintf(decorated, sizeof(decorated), "SUB:%s", targets_csv);
+      role_append_token(out_role, out_role_size, decorated);
+      replaced_sub = 1;
+    } else {
+      role_append_token(out_role, out_role_size, tok);
+    }
+  }
+
+  if (!replaced_sub &&
+      (strcmp(role, "UNKNOWN") == 0 || strcmp(role, "NONE") == 0)) {
+    snprintf(out_role, out_role_size, "SUB:%s", targets_csv);
+    return;
+  }
+
+  if (out_role[0] == '\0') snprintf(out_role, out_role_size, "%s", role);
+}
+
+static int row_is_publisher_like(const names_row_info_t *row) {
+  if (!row) return 0;
+  if (role_has_pub(row->role)) return 1;
+  if (row->pub_port > 0) return 1;
+  if (row->pub_bytes >= 0) return 1;
+  return 0;
+}
+
+static int row_is_subscriber_candidate(const zcm_node_entry_t *entry, const names_row_info_t *row) {
+  if (!entry || !row) return 0;
+  if (endpoint_is_sub_scheme(entry->endpoint)) return 1;
+  if (role_has_sub(row->role)) return 1;
+
+  /* Legacy plain REGISTER over tcp:// can still represent a SUB node.
+   * If role inference has no positive sender signal, allow endpoint-match
+   * decoration to classify it as SUB. */
+  if ((strcmp(row->role, "EXTERNAL") == 0 || strcmp(row->role, "UNKNOWN") == 0) &&
+      !role_has_pub(row->role) && !role_has_push(row->role) && !role_has_pull(row->role) &&
+      row->pub_port <= 0 && row->push_port <= 0 &&
+      row->pub_bytes < 0 && row->push_bytes < 0 && row->pull_bytes < 0) {
+    return 1;
+  }
+
+  return 0;
+}
+
+static void names_rows_apply_subscriber_resolution(zcm_node_entry_t *entries,
+                                                   names_row_info_t *rows,
+                                                   size_t count) {
+  if (!entries || !rows) return;
+
+  for (size_t i = 0; i < count; i++) {
+    char normalized_ep[512] = {0};
+    if (endpoint_normalize_for_matching(entries[i].endpoint,
+                                        normalized_ep, sizeof(normalized_ep)) == 0) {
+      snprintf(rows[i].endpoint_display, sizeof(rows[i].endpoint_display), "%s", normalized_ep);
+    } else if (entries[i].endpoint && entries[i].endpoint[0]) {
+      snprintf(rows[i].endpoint_display, sizeof(rows[i].endpoint_display), "%s", entries[i].endpoint);
+    } else {
+      snprintf(rows[i].endpoint_display, sizeof(rows[i].endpoint_display), "-");
+    }
+    if (rows[i].role[0]) snprintf(rows[i].role_display, sizeof(rows[i].role_display), "%s", rows[i].role);
+    else snprintf(rows[i].role_display, sizeof(rows[i].role_display), "UNKNOWN");
+  }
+
+  for (size_t i = 0; i < count; i++) {
+    if (!row_is_subscriber_candidate(&entries[i], &rows[i])) continue;
+
+    char resolved_endpoint[512] = {0};
+    if (endpoint_normalize_for_matching(entries[i].endpoint,
+                                        resolved_endpoint, sizeof(resolved_endpoint)) != 0) {
+      continue;
+    }
+    snprintf(rows[i].endpoint_display, sizeof(rows[i].endpoint_display), "%s", resolved_endpoint);
+
+    int resolved_port = -1;
+    (void)endpoint_parse_port(resolved_endpoint, &resolved_port);
+
+    char targets_csv[384] = {0};
+    int inferred_sub_bytes = -1;
+    for (size_t j = 0; j < count; j++) {
+      if (j == i) continue;
+      if (!entries[j].name || !entries[j].endpoint) continue;
+      if (!row_is_publisher_like(&rows[j])) continue;
+
+      char normalized_j[512] = {0};
+      if (endpoint_normalize_for_matching(entries[j].endpoint,
+                                          normalized_j, sizeof(normalized_j)) != 0) {
+        continue;
+      }
+      if (strcmp(normalized_j, resolved_endpoint) != 0) continue;
+
+      char target_with_port[256] = {0};
+      if (resolved_port > 0) {
+        snprintf(target_with_port, sizeof(target_with_port), "%s:%d",
+                 entries[j].name, resolved_port);
+      } else {
+        snprintf(target_with_port, sizeof(target_with_port), "%s",
+                 entries[j].name);
+      }
+      csv_append_token(targets_csv, sizeof(targets_csv), target_with_port);
+
+      if (rows[j].pub_bytes >= 0 && rows[j].pub_bytes > inferred_sub_bytes) {
+        inferred_sub_bytes = rows[j].pub_bytes;
+      }
+    }
+
+    if (targets_csv[0]) {
+      build_role_with_sub_targets(rows[i].role, targets_csv,
+                                  rows[i].role_display, sizeof(rows[i].role_display));
+    }
+    if (rows[i].sub_bytes < 0 && inferred_sub_bytes >= 0) {
+      rows[i].sub_bytes = inferred_sub_bytes;
+    }
+  }
+}
 
 static void print_repeat_char(char ch, size_t n) {
   for (size_t i = 0; i < n; i++) putchar(ch);
@@ -586,9 +817,9 @@ static int do_names_broker_ex(const char *endpoint) {
   req = zmq_socket(zcm_context_zmq(ctx), ZMQ_REQ);
   if (!req) goto out;
 
-  int timeout_ms = 1000;
+  int timeout_ms = 5000;
   int linger = 0;
-  int immediate = 1;
+  int immediate = 0;
   zmq_setsockopt(req, ZMQ_RCVTIMEO, &timeout_ms, sizeof(timeout_ms));
   zmq_setsockopt(req, ZMQ_SNDTIMEO, &timeout_ms, sizeof(timeout_ms));
   zmq_setsockopt(req, ZMQ_LINGER, &linger, sizeof(linger));
@@ -662,6 +893,8 @@ static int do_names_broker_ex(const char *endpoint) {
     (void)parse_int_reply(pull_bytes, &rows[i].pull_bytes);
   }
 
+  names_rows_apply_subscriber_resolution(entries, rows, count);
+
   {
     size_t w_name = strlen("NAME");
     size_t w_endpoint = strlen("ENDPOINT");
@@ -677,11 +910,11 @@ static int do_names_broker_ex(const char *endpoint) {
     for (size_t i = 0; i < count; i++) {
       size_t name_len = strlen(entries[i].name);
       if (name_len > w_name) w_name = name_len;
-      size_t ep_len = strlen(entries[i].endpoint);
+      size_t ep_len = strlen(rows[i].endpoint_display);
       if (ep_len > w_endpoint) w_endpoint = ep_len;
       size_t host_len = strlen(rows[i].host);
       if (host_len > w_host) w_host = host_len;
-      size_t role_len = strlen(rows[i].role);
+      size_t role_len = strlen(rows[i].role_display);
       if (role_len > w_role) w_role = role_len;
 
       char num_text[16];
@@ -747,9 +980,9 @@ static int do_names_broker_ex(const char *endpoint) {
 
       printf("%-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s\n",
              (int)w_name, entries[i].name,
-             (int)w_endpoint, entries[i].endpoint,
+             (int)w_endpoint, rows[i].endpoint_display,
              (int)w_host, rows[i].host,
-             (int)w_role, rows[i].role,
+             (int)w_role, rows[i].role_display,
              (int)w_pub_port, pub_port_text,
              (int)w_push_port, push_port_text,
              (int)w_pub_bytes, pub_bytes_text,
@@ -814,14 +1047,18 @@ static int do_names(const char *endpoint) {
                       &rows[i].pub_bytes, &rows[i].sub_bytes,
                       &rows[i].push_bytes, &rows[i].pull_bytes,
                       rows[i].host, sizeof(rows[i].host));
+    }
 
+    names_rows_apply_subscriber_resolution(entries, rows, count);
+
+    for (size_t i = 0; i < count; i++) {
       size_t name_len = strlen(entries[i].name);
       if (name_len > w_name) w_name = name_len;
-      size_t ep_len = strlen(entries[i].endpoint);
+      size_t ep_len = strlen(rows[i].endpoint_display);
       if (ep_len > w_endpoint) w_endpoint = ep_len;
       size_t host_len = strlen(rows[i].host);
       if (host_len > w_host) w_host = host_len;
-      size_t role_len = strlen(rows[i].role);
+      size_t role_len = strlen(rows[i].role_display);
       if (role_len > w_role) w_role = role_len;
 
       char num_text[16];
@@ -891,9 +1128,9 @@ static int do_names(const char *endpoint) {
 
       printf("%-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s\n",
              (int)w_name, entries[i].name,
-             (int)w_endpoint, entries[i].endpoint,
+             (int)w_endpoint, rows[i].endpoint_display,
              (int)w_host, rows[i].host,
-             (int)w_role, rows[i].role,
+             (int)w_role, rows[i].role_display,
              (int)w_pub_port, pub_port_text,
              (int)w_push_port, push_port_text,
              (int)w_pub_bytes, pub_bytes_text,
@@ -915,7 +1152,7 @@ static int do_names(const char *endpoint) {
   return rc;
 }
 
-static int do_names_with_timeout(const char *endpoint, int timeout_ms) {
+static int do_names_with_timeout(const char *endpoint, int timeout_ms, int report_error) {
   pid_t pid = fork();
   if (pid == 0) {
     int rc = do_names(endpoint);
@@ -931,11 +1168,12 @@ static int do_names_with_timeout(const char *endpoint, int timeout_ms) {
     if (r == pid) {
       if (WIFEXITED(status)) {
         int rc = WEXITSTATUS(status);
-        if (rc != 0) {
+        if (rc != 0 && report_error) {
           fprintf(stderr, "zcm: broker not reachable\n");
         }
         return rc;
       }
+      if (report_error) fprintf(stderr, "zcm: broker not reachable\n");
       return 1;
     }
     usleep(100 * 1000);
@@ -944,6 +1182,17 @@ static int do_names_with_timeout(const char *endpoint, int timeout_ms) {
 
   kill(pid, SIGKILL);
   waitpid(pid, &status, 0);
+  if (report_error) fprintf(stderr, "zcm: broker not reachable\n");
+  return 1;
+}
+
+static int do_names_with_retry(const char *endpoint, int timeout_ms, int attempts) {
+  if (attempts <= 0) attempts = 1;
+  for (int i = 0; i < attempts; i++) {
+    int rc = do_names_with_timeout(endpoint, timeout_ms, 0);
+    if (rc == 0) return 0;
+    if (i + 1 < attempts) usleep(200 * 1000);
+  }
   fprintf(stderr, "zcm: broker not reachable\n");
   return 1;
 }
@@ -1892,7 +2141,7 @@ int main(int argc, char **argv) {
 
   int rc = 1;
   if (strcmp(cmd, "names") == 0) {
-    rc = do_names_with_timeout(endpoint, 2000);
+    rc = do_names_with_retry(endpoint, 7000, 3);
   } else if (strcmp(cmd, "send") == 0) {
     rc = do_send(endpoint, name, type, values, value_count);
   } else if (strcmp(cmd, "kill") == 0) {
@@ -1904,7 +2153,7 @@ int main(int argc, char **argv) {
   } else if (strcmp(sub, "stop") == 0) {
     rc = do_broker_cmd(endpoint, "STOP", "OK");
   } else {
-    rc = do_names_with_timeout(endpoint, 2000);
+    rc = do_names_with_retry(endpoint, 7000, 3);
   }
 
   free(endpoint);

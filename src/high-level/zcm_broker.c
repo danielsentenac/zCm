@@ -40,6 +40,7 @@ struct zcm_broker {
 };
 
 static int entry_remove(struct zcm_broker *b, const char *name);
+static int query_proc_ping_ok(zcm_context_t *ctx, const char *endpoint);
 
 static void entry_reset_metrics(struct zcm_broker_entry *e) {
   if (!e) return;
@@ -235,6 +236,13 @@ static int host_is_local(const char *host) {
   return strcasecmp(host_short, local_short) == 0;
 }
 
+static int host_is_loopback_literal(const char *host) {
+  if (!host || !*host) return 0;
+  return (strcmp(host, "127.0.0.1") == 0 ||
+          strcmp(host, "::1") == 0 ||
+          strcasecmp(host, "localhost") == 0);
+}
+
 static int pid_is_alive_local(int pid) {
   if (pid <= 0) return 0;
   if (kill((pid_t)pid, 0) == 0) return 1;
@@ -243,7 +251,9 @@ static int pid_is_alive_local(int pid) {
 
 static int entry_is_stale_local(const struct zcm_broker_entry *e) {
   if (!e || e->pid <= 0) return 0;
-  if (!host_is_local(e->host)) return 0;
+  /* PID liveness is reliable only for explicit loopback-advertised entries.
+   * Hostname-based "local" processes can run in different PID namespaces. */
+  if (!host_is_loopback_literal(e->host)) return 0;
   return !pid_is_alive_local(e->pid);
 }
 
@@ -254,6 +264,17 @@ static int entry_prune_stale_local(struct zcm_broker *b) {
 
   while (e) {
     if (entry_is_stale_local(e)) {
+      /* PID-based liveness can be wrong across PID namespaces. If control is
+       * still reachable, keep the entry and trust active endpoint behavior. */
+      if (b && b->ctx &&
+          e->ctrl_endpoint && e->ctrl_endpoint[0] &&
+          endpoint_is_queryable(e->ctrl_endpoint) &&
+          query_proc_ping_ok(b->ctx, e->ctrl_endpoint)) {
+        prev = e;
+        e = e->next;
+        continue;
+      }
+
       struct zcm_broker_entry *dead = e;
       if (prev) prev->next = e->next;
       else b->head = e->next;
@@ -499,9 +520,9 @@ static int query_proc_command_with_ctrl_fallback(zcm_context_t *ctx,
     return -1;
   }
   if (ctrl_endpoint && *ctrl_endpoint) {
-    if (query_proc_command(ctx, ctrl_endpoint, cmd, out_text, out_text_size, out_code) == 0) {
-      return 0;
-    }
+    /* Broker-side metric probing must not fall back to data endpoint when a
+     * control endpoint is declared: data endpoint can be non-REP and stall. */
+    return query_proc_command(ctx, ctrl_endpoint, cmd, out_text, out_text_size, out_code);
   }
   if (!endpoint || !*endpoint) return -1;
   return query_proc_command(ctx, endpoint, cmd, out_text, out_text_size, out_code);
@@ -586,12 +607,12 @@ static void entry_refresh_metrics(struct zcm_broker *b, struct zcm_broker_entry 
   }
 
   /*
-   * SUB-only external consumers (for example servlet subscribers) can register
-   * an endpoint that points to their publisher data socket. That endpoint is
-   * not a control REP endpoint and must not be probed with DATA_* commands.
+   * Entries without an explicit control endpoint must not be synchronously
+   * probed with DATA_* from the broker LIST_EX path. Legacy REGISTER clients
+   * may expose non-REQ/REP data endpoints here and probing can stall names.
+   * Keep current role/metrics (for example from METRICS) and return fast.
    */
-  if ((!e->ctrl_endpoint || !e->ctrl_endpoint[0]) &&
-      (strcmp(e->role, "SUB") == 0 || endpoint_has_scheme(e->endpoint, "sub://"))) {
+  if (!e->ctrl_endpoint || !e->ctrl_endpoint[0]) {
     return;
   }
 
@@ -707,10 +728,7 @@ static void *broker_thread(void *arg) {
     zmq_msg_close(&part);
 
     (void)entry_prune_stale_local(b);
-    if (strcmp(cmd, "LIST_EX") == 0 ||
-        strcmp(cmd, "LIST") == 0 ||
-        strcmp(cmd, "LOOKUP") == 0 ||
-        strcmp(cmd, "INFO") == 0) {
+    if (strcmp(cmd, "INFO") == 0) {
       (void)entry_prune_stale_remote_ctrl(b);
     }
 

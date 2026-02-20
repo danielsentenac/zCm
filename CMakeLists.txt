@@ -249,6 +249,13 @@ if(ZCM_BUILD_TESTS)
   set_target_properties(zcm_cli_ping_fallback PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${ZCM_TEST_OUTPUT_DIR}
   )
+
+  add_executable(zcm_cli_names_subscriber_targets tests/node/zcm_cli_names_subscriber_targets.c)
+  target_link_libraries(zcm_cli_names_subscriber_targets PRIVATE zcm_lib)
+  add_test(NAME zcm_cli_names_subscriber_targets COMMAND zcm_cli_names_subscriber_targets)
+  set_target_properties(zcm_cli_names_subscriber_targets PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${ZCM_TEST_OUTPUT_DIR}
+  )
 endif()
 
 if(ZCM_BUILD_EXAMPLES)

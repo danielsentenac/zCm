@@ -7,19 +7,23 @@ List registered processes:
 `zcm names` prints a normalized table with these columns:
 - `NAME`: registered node name
 - `ENDPOINT`: data endpoint registered in broker
+  - for `sub://host:port` registrations, CLI shows normalized `tcp://host:port`
 - `HOST`: node host (from broker metadata when available, else parsed from endpoint)
   - if `HOST` is an IP, CLI tries reverse-DNS resolution and prints hostname when PTR exists
 - `ROLE`: inferred data role (`BROKER`, `PUB`, `SUB`, `PUSH`, `PULL`, combinations, `EXTERNAL`)
+  - subscriber rows can be annotated as `SUB:<name:port[,name:port...]>` when endpoint matching resolves targets
 - `PUB_PORT`: first publisher data port exposed by node (`-` when unavailable)
 - `PUSH_PORT`: first pusher data port exposed by node (`-` when unavailable)
 - `PUB_BYTES`: publisher payload byte count
 - `SUB_BYTES`: subscriber last received payload byte count
+  - when subscriber metric is unavailable, CLI can infer it from matched publisher `PUB_BYTES`
 - `PUSH_BYTES`: pusher payload byte count
 - `PULL_BYTES`: puller last received payload byte count
 
 `zcm names` behavior details:
 - If broker is not reachable, the command prints only:
   - `zcm: broker not reachable`
+- `zcm names` retries transient broker failures before reporting offline.
 - Nodes registered without control metadata (plain `REGISTER`) are shown as `EXTERNAL`
   without probing `DATA_*` commands (prevents names timeout on non-`zcm_proc` nodes).
 - Nodes exposing control metadata (`REGISTER_EX` + `DATA_*` commands) can show full
@@ -27,8 +31,12 @@ List registered processes:
 - Broker-side metric probing is local-host only; stale remote registrations do not
   block `LIST_EX` responses (remote nodes should report metrics via `METRICS`).
 - For remote entries with control metadata (`REGISTER_EX` + PID), broker performs a
-  quick control liveness check during `LIST`/`LIST_EX`/`LOOKUP`/`INFO`; unreachable
-  stale entries are pruned automatically.
+  quick control liveness check during `INFO`; unreachable stale entries are pruned.
+- `LIST`/`LIST_EX` are kept read-only and avoid stale remote prune side effects.
+- For `sub://host:port` registrations, CLI cross-references matching `tcp://host:port`
+  entries to display subscriber target names in `ROLE` and a normalized `ENDPOINT`.
+- For legacy `tcp://host:port` registrations inferred as subscriber-side, CLI can also
+  resolve `ROLE` target annotation by endpoint matching against publisher entries.
 
 Kill (shutdown) a registered process:
 ```bash

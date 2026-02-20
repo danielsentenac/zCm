@@ -134,9 +134,19 @@ int main(void) {
   }
 
   {
+    char info_ep[256] = {0};
+    if (zcm_node_info(node, "stale-remote",
+                      info_ep, sizeof(info_ep),
+                      NULL, 0, NULL, 0, NULL) == 0) {
+      fprintf(stderr, "zcm_broker_list_ex_remote_stale: stale-remote should have been pruned by INFO, got endpoint: %s\n", info_ep);
+      goto cleanup;
+    }
+  }
+
+  {
     char ep[256] = {0};
     if (zcm_node_lookup(node, "stale-remote", ep, sizeof(ep)) == 0) {
-      fprintf(stderr, "zcm_broker_list_ex_remote_stale: stale-remote should have been pruned, got endpoint: %s\n", ep);
+      fprintf(stderr, "zcm_broker_list_ex_remote_stale: stale-remote still present after INFO prune, endpoint: %s\n", ep);
       goto cleanup;
     }
   }

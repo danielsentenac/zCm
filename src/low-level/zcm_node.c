@@ -64,7 +64,7 @@ static int send_frames_req(void *sock, const char *cmd, const char *name, const 
 
 static void set_req_socket_options(void *sock, int timeout_ms) {
   int linger_ms = 0;
-  int immediate = 1;
+  int immediate = 0;
   zmq_setsockopt(sock, ZMQ_RCVTIMEO, &timeout_ms, sizeof(timeout_ms));
   zmq_setsockopt(sock, ZMQ_SNDTIMEO, &timeout_ms, sizeof(timeout_ms));
   zmq_setsockopt(sock, ZMQ_LINGER, &linger_ms, sizeof(linger_ms));
