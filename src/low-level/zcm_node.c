@@ -118,6 +118,20 @@ static int endpoint_tcp_parse_host_port(const char *endpoint,
   return 0;
 }
 
+static int endpoint_data_parse_host_port(const char *endpoint,
+                                         char *out_host, size_t out_host_size,
+                                         int *out_port) {
+  if (!endpoint || !out_host || out_host_size == 0 || !out_port) return -1;
+  if (endpoint_tcp_parse_host_port(endpoint, out_host, out_host_size, out_port) == 0) return 0;
+
+  if (strncmp(endpoint, "sub://", 6) == 0) {
+    char tcp_ep[512] = {0};
+    snprintf(tcp_ep, sizeof(tcp_ep), "tcp://%s", endpoint + 6);
+    return endpoint_tcp_parse_host_port(tcp_ep, out_host, out_host_size, out_port);
+  }
+  return -1;
+}
+
 static int host_is_connectable(const char *host) {
   if (!host || !*host) return 0;
   if (strcmp(host, "*") == 0 ||
@@ -144,16 +158,19 @@ static int build_tcp_endpoint_text(const char *host, int port,
 }
 
 static int infer_default_ctrl_endpoint(const char *data_endpoint,
+                                       const char *host_hint,
                                        char *out_ctrl, size_t out_ctrl_size) {
   char host[256] = {0};
+  const char *ctrl_host = host;
   int port = 0;
 
   if (!out_ctrl || out_ctrl_size == 0) return -1;
   out_ctrl[0] = '\0';
-  if (endpoint_tcp_parse_host_port(data_endpoint, host, sizeof(host), &port) != 0) return -1;
-  if (!host_is_connectable(host)) return -1;
+  if (endpoint_data_parse_host_port(data_endpoint, host, sizeof(host), &port) != 0) return -1;
+  if (host_hint && host_hint[0] && host_is_connectable(host_hint)) ctrl_host = host_hint;
+  if (!host_is_connectable(ctrl_host)) return -1;
   if (port >= 65535) return -1;
-  return build_tcp_endpoint_text(host, port + 1, out_ctrl, out_ctrl_size);
+  return build_tcp_endpoint_text(ctrl_host, port + 1, out_ctrl, out_ctrl_size);
 }
 
 int zcm_node_register(zcm_node_t *node, const char *name, const char *endpoint) {
@@ -270,7 +287,7 @@ int zcm_node_info(zcm_node_t *node, const char *name,
 
   if (ctrl[0] == '\0') {
     char inferred_ctrl[512] = {0};
-    if (infer_default_ctrl_endpoint(ep, inferred_ctrl, sizeof(inferred_ctrl)) == 0) {
+    if (infer_default_ctrl_endpoint(ep, host, inferred_ctrl, sizeof(inferred_ctrl)) == 0) {
       strncpy(ctrl, inferred_ctrl, sizeof(ctrl) - 1);
       ctrl[sizeof(ctrl) - 1] = '\0';
     }

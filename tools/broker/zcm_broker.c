@@ -9,6 +9,7 @@
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <arpa/inet.h>
+#include <sys/stat.h>
 
 static volatile sig_atomic_t g_stop = 0;
 
@@ -127,6 +128,7 @@ static int update_domain_host_in_file(const char *file_name, const char *domain,
                                       const char *new_host, int new_port) {
   if (!file_name || !*file_name || !domain || !*domain || !new_host || !*new_host) return -1;
   if (new_port < 1 || new_port > 65535) return -1;
+  const mode_t domains_mode = (S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 
   FILE *in = fopen(file_name, "r");
   if (!in) return -1;
@@ -138,6 +140,12 @@ static int update_domain_host_in_file(const char *file_name, const char *domain,
   }
   int fd = mkstemp(tmp_name);
   if (fd < 0) {
+    fclose(in);
+    return -1;
+  }
+  if (fchmod(fd, domains_mode) != 0) {
+    close(fd);
+    unlink(tmp_name);
     fclose(in);
     return -1;
   }
@@ -203,6 +211,9 @@ static int update_domain_host_in_file(const char *file_name, const char *domain,
 
   if (rename(tmp_name, file_name) != 0) {
     unlink(tmp_name);
+    return -1;
+  }
+  if (chmod(file_name, domains_mode) != 0) {
     return -1;
   }
   return 0;

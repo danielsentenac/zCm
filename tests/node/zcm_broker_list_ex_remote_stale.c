@@ -1,6 +1,7 @@
 #include "zcm/zcm.h"
 #include "zcm/zcm_node.h"
 
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -27,6 +28,10 @@ int main(void) {
     fprintf(stderr, "zcm_broker_list_ex_remote_stale: context init failed\n");
     return 1;
   }
+
+  /* Keep this test deterministic: prune stale remotes on first failed probe. */
+  (void)setenv("ZCM_BROKER_REMOTE_PROBE_INTERVAL_MS", "250", 1);
+  (void)setenv("ZCM_BROKER_REMOTE_PROBE_FAILS", "1", 1);
 
   broker = zcm_broker_start(ctx, broker_ep);
   if (!broker) {

@@ -24,6 +24,13 @@
 #define ZCM_PROC_REANNOUNCE_MS_MIN 100
 #define ZCM_PROC_REANNOUNCE_MS_MAX 60000
 
+#ifndef ZCM_PROC_REANNOUNCE_BACKOFF_MAX_MS_DEFAULT
+#define ZCM_PROC_REANNOUNCE_BACKOFF_MAX_MS_DEFAULT 30000
+#endif
+
+#define ZCM_PROC_REANNOUNCE_BACKOFF_MAX_MS_MIN 1000
+#define ZCM_PROC_REANNOUNCE_BACKOFF_MAX_MS_MAX 300000
+
 struct zcm_proc {
   zcm_context_t *ctx;
   zcm_node_t *node;
@@ -35,6 +42,7 @@ struct zcm_proc {
   char *host;
   int pid;
   int announce_interval_ms;
+  int announce_backoff_max_ms;
   int announce_ok;
   pthread_t ctrl_thread;
   pthread_t announce_thread;
@@ -57,6 +65,55 @@ static int parse_positive_int_range(const char *text, int min_val, int max_val, 
   return 0;
 }
 
+static uint32_t prng_next(uint32_t state) {
+  return state * 1103515245u + 12345u;
+}
+
+static int add_retry_jitter_ms(int base_ms, uint32_t *rng_state) {
+  int span;
+  int delta;
+  uint32_t v;
+  if (base_ms <= 0 || !rng_state) return base_ms;
+  span = base_ms / 10; /* +/-10% */
+  if (span <= 0) return base_ms;
+  v = prng_next(*rng_state);
+  *rng_state = v;
+  delta = (int)(v % (uint32_t)(2 * span + 1)) - span;
+  base_ms += delta;
+  if (base_ms < 1) base_ms = 1;
+  return base_ms;
+}
+
+static int compute_reannounce_delay_ms(const struct zcm_proc *proc, int consecutive_failures) {
+  int delay;
+  int i;
+  if (!proc) return ZCM_PROC_REANNOUNCE_MS_DEFAULT;
+  delay = proc->announce_interval_ms;
+  if (delay < 1) delay = 1;
+  if (consecutive_failures <= 0) {
+    if (delay > proc->announce_backoff_max_ms) return proc->announce_backoff_max_ms;
+    return delay;
+  }
+  for (i = 0; i < consecutive_failures; i++) {
+    if (delay >= proc->announce_backoff_max_ms) break;
+    if (delay > (proc->announce_backoff_max_ms / 2)) {
+      delay = proc->announce_backoff_max_ms;
+      break;
+    }
+    delay *= 2;
+  }
+  if (delay > proc->announce_backoff_max_ms) delay = proc->announce_backoff_max_ms;
+  if (delay < 1) delay = 1;
+  return delay;
+}
+
+static int host_is_loopback_literal(const char *host) {
+  if (!host || !*host) return 0;
+  return (strcmp(host, "127.0.0.1") == 0 ||
+          strcmp(host, "::1") == 0 ||
+          strcasecmp(host, "localhost") == 0);
+}
+
 static int proc_register_ex(struct zcm_proc *proc) {
   if (!proc || !proc->node || !proc->name || !proc->reg_endpoint ||
       !proc->ctrl_reg_endpoint || !proc->host) {
@@ -70,7 +127,11 @@ static int proc_register_ex(struct zcm_proc *proc) {
 
 static void *announce_thread_main(void *arg) {
   struct zcm_proc *proc = (struct zcm_proc *)arg;
-  uint64_t next_announce_ms = monotonic_ms() + (uint64_t)proc->announce_interval_ms;
+  int consecutive_failures = 0;
+  uint32_t rng_state = (uint32_t)((proc && proc->pid > 0) ? proc->pid : getpid());
+  uint64_t now0 = monotonic_ms();
+  int first_delay_ms = add_retry_jitter_ms(proc->announce_interval_ms, &rng_state);
+  uint64_t next_announce_ms = (now0 != 0) ? (now0 + (uint64_t)first_delay_ms) : 0;
 
   for (;;) {
     if (proc->stop) break;
@@ -82,13 +143,19 @@ static void *announce_thread_main(void *arg) {
           fflush(stdout);
         }
         proc->announce_ok = 1;
+        consecutive_failures = 0;
       } else {
         if (proc->announce_ok) {
           fprintf(stderr, "zcm_proc: broker unreachable, waiting to re-register %s\n", proc->name);
         }
         proc->announce_ok = 0;
+        if (consecutive_failures < 30) consecutive_failures++;
       }
-      next_announce_ms = now_ms + (uint64_t)proc->announce_interval_ms;
+      {
+        int delay_ms = compute_reannounce_delay_ms(proc, consecutive_failures);
+        int jittered_ms = add_retry_jitter_ms(delay_ms, &rng_state);
+        next_announce_ms = now_ms + (uint64_t)jittered_ms;
+      }
       continue;
     }
     usleep(50 * 1000);
@@ -397,10 +464,11 @@ int zcm_proc_init(const char *name, zcm_socket_type_t data_type, int bind_data,
   int cfg_bind_data = bind_data ? 1 : 0;
   int cfg_ctrl_timeout_ms = 200;
   int announce_interval_ms = ZCM_PROC_REANNOUNCE_MS_DEFAULT;
+  int announce_backoff_max_ms = ZCM_PROC_REANNOUNCE_BACKOFF_MAX_MS_DEFAULT;
   int rc = -1;
 
   char *broker = NULL;
-  char *host = NULL;
+  char *domain_host = NULL;
   int first_port = 0;
   int range_size = 0;
 
@@ -423,11 +491,28 @@ int zcm_proc_init(const char *name, zcm_socket_type_t data_type, int bind_data,
               announce_env, ZCM_PROC_REANNOUNCE_MS_DEFAULT);
     }
   }
+  {
+    const char *announce_backoff_env = getenv("ZCM_PROC_REANNOUNCE_BACKOFF_MAX_MS");
+    if (announce_backoff_env && *announce_backoff_env) {
+      int parsed = 0;
+      if (parse_positive_int_range(announce_backoff_env, ZCM_PROC_REANNOUNCE_BACKOFF_MAX_MS_MIN,
+                                   ZCM_PROC_REANNOUNCE_BACKOFF_MAX_MS_MAX, &parsed) == 0) {
+        announce_backoff_max_ms = parsed;
+      } else {
+        fprintf(stderr,
+                "zcm_proc: invalid ZCM_PROC_REANNOUNCE_BACKOFF_MAX_MS='%s', using default %d ms\n",
+                announce_backoff_env, ZCM_PROC_REANNOUNCE_BACKOFF_MAX_MS_DEFAULT);
+      }
+    }
+  }
+  if (announce_backoff_max_ms < announce_interval_ms) {
+    announce_backoff_max_ms = announce_interval_ms;
+  }
 
   if (load_proc_config(name, &cfg_data_type, &cfg_bind_data, &cfg_ctrl_timeout_ms) != 0) {
     goto fail;
   }
-  if (load_domain_info(&broker, &host, &first_port, &range_size) != 0) {
+  if (load_domain_info(&broker, &domain_host, &first_port, &range_size) != 0) {
     fprintf(stderr, "zcm_proc: missing ZCMDOMAIN or ZCmDomains entry\n");
     goto fail;
   }
@@ -454,7 +539,28 @@ int zcm_proc_init(const char *name, zcm_socket_type_t data_type, int bind_data,
     goto fail;
   }
 
-  const char *use_host = host ? host : "127.0.0.1";
+  const char *adv_host_env = getenv("ZCM_PROC_ADVERTISED_HOST");
+  const char *adv_host_env2 = getenv("ZCM_ADVERTISED_HOST");
+  const char *hostname_env = getenv("HOSTNAME");
+  char local_host[256] = {0};
+  const char *use_host = NULL;
+  if (adv_host_env && *adv_host_env) {
+    use_host = adv_host_env;
+  } else if (adv_host_env2 && *adv_host_env2) {
+    use_host = adv_host_env2;
+  } else if (domain_host && host_is_loopback_literal(domain_host)) {
+    use_host = domain_host;
+  } else if (hostname_env && *hostname_env && strcasecmp(hostname_env, "localhost") != 0) {
+    use_host = hostname_env;
+  } else if (gethostname(local_host, sizeof(local_host) - 1) == 0 &&
+             local_host[0] && strcasecmp(local_host, "localhost") != 0) {
+    local_host[sizeof(local_host) - 1] = '\0';
+    use_host = local_host;
+  } else if (domain_host && *domain_host) {
+    use_host = domain_host;
+  } else {
+    use_host = "127.0.0.1";
+  }
   char data_reg_ep[256] = {0};
   char ctrl_reg_ep[256] = {0};
   if (data_port > 0) snprintf(data_reg_ep, sizeof(data_reg_ep), "tcp://%s:%d", use_host, data_port);
@@ -483,6 +589,7 @@ int zcm_proc_init(const char *name, zcm_socket_type_t data_type, int bind_data,
   proc->host = strdup(use_host);
   proc->pid = getpid();
   proc->announce_interval_ms = announce_interval_ms;
+  proc->announce_backoff_max_ms = announce_backoff_max_ms;
   proc->announce_ok = 1;
   proc->stop = 0;
   if (!proc->name || !proc->reg_endpoint || !proc->ctrl_reg_endpoint || !proc->host) {
@@ -525,7 +632,7 @@ fail:
     if (ctx) zcm_context_free(ctx);
   }
   free(broker);
-  free(host);
+  free(domain_host);
   return rc;
 }
 
