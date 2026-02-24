@@ -258,7 +258,7 @@ int main(void) {
 
   snprintf(broker_ep, sizeof(broker_ep), "tcp://127.0.0.1:%d", broker_port);
   snprintf(pub_ep, sizeof(pub_ep), "tcp://127.0.0.1:%d", pub_port);
-  snprintf(sub_ep, sizeof(sub_ep), "tcp://127.0.0.1:%d", pub_port);
+  snprintf(sub_ep, sizeof(sub_ep), "sub://127.0.0.1:%d", pub_port);
 
   ctx = zcm_context_new();
   if (!ctx) {
@@ -276,10 +276,18 @@ int main(void) {
     goto done;
   }
 
-  if (zcm_node_register(node, "zFdVac", pub_ep) != 0 ||
-      zcm_node_register(node, "zFdIOGet", sub_ep) != 0) {
-    fprintf(stderr, "zcm_cli_names_subscriber_targets: register failed\n");
-    goto done;
+  {
+    char vac_ctrl[256] = {0};
+    char ioget_ctrl[256] = {0};
+    snprintf(vac_ctrl, sizeof(vac_ctrl), "tcp://127.0.0.1:%d", pub_port + 1000);
+    snprintf(ioget_ctrl, sizeof(ioget_ctrl), "tcp://127.0.0.1:%d", pub_port + 1001);
+    if (zcm_node_register_ex(node, "zFdVac", pub_ep, vac_ctrl, "127.0.0.1", (int)getpid(),
+                             "PUB", pub_port, -1) != 0 ||
+        zcm_node_register_ex(node, "zFdIOGet", sub_ep, ioget_ctrl, "127.0.0.1", (int)getpid(),
+                             "SUB", -1, -1) != 0) {
+      fprintf(stderr, "zcm_cli_names_subscriber_targets: register failed\n");
+      goto done;
+    }
   }
   if (zcm_node_report_metrics(node, "zFdVac", "PUB",
                               pub_port, -1,

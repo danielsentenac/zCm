@@ -28,66 +28,67 @@ int main(void) {
     goto cleanup;
   }
 
-  /* Legacy REGISTER has no explicit control endpoint. */
-  if (zcm_node_register(node, "legacy", "tcp://127.0.0.1:7300") != 0) {
-    fprintf(stderr, "zcm_node_ctrl_fallback: legacy register failed\n");
+  if (zcm_node_register_ex(node, "missing-ctrl",
+                           "tcp://127.0.0.1:7300",
+                           "",
+                           "127.0.0.1", (int)getpid(),
+                           "PUB", 7300, -1) == 0) {
+    fprintf(stderr, "zcm_node_ctrl_fallback: missing ctrl endpoint must fail\n");
+    goto cleanup;
+  }
+  if (zcm_node_register_ex(node, "missing-host",
+                           "tcp://127.0.0.1:7300",
+                           "tcp://127.0.0.1:9300",
+                           "", (int)getpid(),
+                           "PUB", 7300, -1) == 0) {
+    fprintf(stderr, "zcm_node_ctrl_fallback: missing host must fail\n");
+    goto cleanup;
+  }
+  if (zcm_node_register_ex(node, "missing-pid",
+                           "tcp://127.0.0.1:7300",
+                           "tcp://127.0.0.1:9300",
+                           "127.0.0.1", 0,
+                           "PUB", 7300, -1) == 0) {
+    fprintf(stderr, "zcm_node_ctrl_fallback: non-positive pid must fail\n");
     goto cleanup;
   }
 
-  char endpoint[256] = {0};
-  char ctrl[256] = {0};
-  if (zcm_node_info(node, "legacy",
-                    endpoint, sizeof(endpoint),
-                    ctrl, sizeof(ctrl),
-                    NULL, 0, NULL) != 0) {
-    fprintf(stderr, "zcm_node_ctrl_fallback: legacy info failed\n");
-    goto cleanup;
-  }
-  if (strcmp(endpoint, "tcp://127.0.0.1:7300") != 0) {
-    fprintf(stderr, "unexpected endpoint for legacy: %s\n", endpoint);
-    goto cleanup;
-  }
-  if (strcmp(ctrl, "tcp://127.0.0.1:7301") != 0) {
-    fprintf(stderr, "expected inferred ctrl endpoint tcp://127.0.0.1:7301 got: %s\n", ctrl);
-    goto cleanup;
-  }
-
-  /* Explicit REGISTER_EX control endpoint must remain unchanged. */
   if (zcm_node_register_ex(node, "explicit",
                            "tcp://127.0.0.1:7400",
                            "tcp://127.0.0.1:9400",
-                           "127.0.0.1", (int)getpid()) != 0) {
+                           "127.0.0.1", (int)getpid(),
+                           "PUB", 7400, -1) != 0) {
     fprintf(stderr, "zcm_node_ctrl_fallback: explicit register_ex failed\n");
     goto cleanup;
   }
+  char endpoint[256] = {0};
+  char ctrl[256] = {0};
+  char host[256] = {0};
+  int pid = 0;
+  memset(endpoint, 0, sizeof(endpoint));
   memset(ctrl, 0, sizeof(ctrl));
+  memset(host, 0, sizeof(host));
   if (zcm_node_info(node, "explicit",
-                    NULL, 0,
+                    endpoint, sizeof(endpoint),
                     ctrl, sizeof(ctrl),
-                    NULL, 0, NULL) != 0) {
+                    host, sizeof(host), &pid) != 0) {
     fprintf(stderr, "zcm_node_ctrl_fallback: explicit info failed\n");
+    goto cleanup;
+  }
+  if (strcmp(endpoint, "tcp://127.0.0.1:7400") != 0) {
+    fprintf(stderr, "explicit endpoint mismatch: %s\n", endpoint);
     goto cleanup;
   }
   if (strcmp(ctrl, "tcp://127.0.0.1:9400") != 0) {
     fprintf(stderr, "explicit ctrl endpoint changed unexpectedly: %s\n", ctrl);
     goto cleanup;
   }
-
-  /* Port overflow should not produce an inferred control endpoint. */
-  if (zcm_node_register(node, "overflow", "tcp://127.0.0.1:65535") != 0) {
-    fprintf(stderr, "zcm_node_ctrl_fallback: overflow register failed\n");
+  if (strcmp(host, "127.0.0.1") != 0) {
+    fprintf(stderr, "explicit host mismatch: %s\n", host);
     goto cleanup;
   }
-  memset(ctrl, 0, sizeof(ctrl));
-  if (zcm_node_info(node, "overflow",
-                    NULL, 0,
-                    ctrl, sizeof(ctrl),
-                    NULL, 0, NULL) != 0) {
-    fprintf(stderr, "zcm_node_ctrl_fallback: overflow info failed\n");
-    goto cleanup;
-  }
-  if (ctrl[0] != '\0') {
-    fprintf(stderr, "expected empty ctrl endpoint for overflow case, got: %s\n", ctrl);
+  if (pid != (int)getpid()) {
+    fprintf(stderr, "explicit pid mismatch: %d\n", pid);
     goto cleanup;
   }
 

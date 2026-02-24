@@ -22,11 +22,9 @@ struct zcm_broker_entry {
   char *ctrl_endpoint;
   char *host;
   int pid;
-  int is_legacy;
-  uint64_t legacy_expires_at_ms;
   uint64_t remote_probe_at_ms;
   int remote_probe_failures;
-  char role[32];
+  char role[512];
   int pub_port;
   int push_port;
   int pub_bytes;
@@ -39,7 +37,6 @@ struct zcm_broker_entry {
 struct zcm_broker {
   zcm_context_t *ctx;
   char *endpoint;
-  int legacy_ttl_ms;
   int remote_probe_interval_ms;
   int remote_probe_failures_before_drop;
   int trace_reg;
@@ -49,21 +46,16 @@ struct zcm_broker {
 };
 
 static int entry_remove(struct zcm_broker *b, const char *name);
+static struct zcm_broker_entry *entry_find(struct zcm_broker *b, const char *name);
+static void entry_effective_endpoint(const struct zcm_broker_entry *e,
+                                     char *out_endpoint,
+                                     size_t out_size);
 static int query_proc_ping_ok(zcm_context_t *ctx, const char *endpoint);
 static int host_is_local(const char *host);
 static int host_equivalent(const char *a, const char *b);
 static int build_tcp_endpoint_text(const char *host, int port,
                                    char *out, size_t out_size);
-static int infer_ctrl_endpoint_for_entry(const struct zcm_broker_entry *e,
-                                         char *out_ctrl_endpoint,
-                                         size_t out_size);
-static int entry_set_legacy(struct zcm_broker *b, const char *name,
-                            const char *endpoint, const char *peer_host);
-static int entry_prune_expired_legacy(struct zcm_broker *b);
 
-#define ZCM_BROKER_LEGACY_TTL_MS_DEFAULT 1000
-#define ZCM_BROKER_LEGACY_TTL_MS_MIN 500
-#define ZCM_BROKER_LEGACY_TTL_MS_MAX 300000
 #define ZCM_BROKER_REMOTE_PROBE_INTERVAL_MS_DEFAULT 3000
 #define ZCM_BROKER_REMOTE_PROBE_INTERVAL_MS_MIN 250
 #define ZCM_BROKER_REMOTE_PROBE_INTERVAL_MS_MAX 120000
@@ -86,18 +78,6 @@ static uint64_t monotonic_ms(void) {
   struct timespec ts;
   if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
   return ((uint64_t)ts.tv_sec * 1000ULL) + ((uint64_t)ts.tv_nsec / 1000000ULL);
-}
-
-static int parse_legacy_ttl_ms_from_env(void) {
-  const char *env = getenv("ZCM_BROKER_LEGACY_TTL_MS");
-  if (!env || !*env) return ZCM_BROKER_LEGACY_TTL_MS_DEFAULT;
-  char *end = NULL;
-  long v = strtol(env, &end, 10);
-  if (!end || *end != '\0') return ZCM_BROKER_LEGACY_TTL_MS_DEFAULT;
-  if (v < ZCM_BROKER_LEGACY_TTL_MS_MIN || v > ZCM_BROKER_LEGACY_TTL_MS_MAX) {
-    return ZCM_BROKER_LEGACY_TTL_MS_DEFAULT;
-  }
-  return (int)v;
 }
 
 static int parse_remote_probe_interval_ms_from_env(void) {
@@ -131,14 +111,6 @@ static int parse_bool_env_default0(const char *name) {
   if (!v || !*v) return 0;
   if (strcmp(v, "0") == 0 || strcasecmp(v, "false") == 0 || strcasecmp(v, "no") == 0) return 0;
   return 1;
-}
-
-static void entry_refresh_legacy_lease(struct zcm_broker *b, struct zcm_broker_entry *e) {
-  uint64_t now = 0;
-  if (!b || !e || !e->is_legacy) return;
-  now = monotonic_ms();
-  if (now == 0) return;
-  e->legacy_expires_at_ms = now + (uint64_t)b->legacy_ttl_ms;
 }
 
 static int endpoint_has_scheme(const char *endpoint, const char *scheme) {
@@ -202,11 +174,6 @@ static int endpoint_host_needs_resolution(const char *host) {
   }
 
   return 0;
-}
-
-static int host_is_connectable(const char *host) {
-  if (!host || !*host) return 0;
-  return !endpoint_host_needs_resolution(host);
 }
 
 static int endpoint_rewrite_host(const char *endpoint,
@@ -296,6 +263,20 @@ static void entry_effective_endpoint(const struct zcm_broker_entry *e,
   (void)build_tcp_endpoint_text(e->host, ep_port, out_endpoint, out_size);
 }
 
+static void entry_reqrep_endpoint(const struct zcm_broker_entry *e,
+                                  char *out_endpoint,
+                                  size_t out_size) {
+  if (!out_endpoint || out_size == 0) return;
+  out_endpoint[0] = '\0';
+  if (!e) return;
+
+  if (e->ctrl_endpoint && e->ctrl_endpoint[0]) {
+    snprintf(out_endpoint, out_size, "%s", e->ctrl_endpoint);
+    return;
+  }
+  entry_effective_endpoint(e, out_endpoint, out_size);
+}
+
 static int parse_int_text(const char *text, int *out_value) {
   if (!text || !out_value) return -1;
   char *end = NULL;
@@ -304,6 +285,28 @@ static int parse_int_text(const char *text, int *out_value) {
   if (v < INT_MIN || v > INT_MAX) return -1;
   *out_value = (int)v;
   return 0;
+}
+
+static char *trim_ascii_ws_inplace(char *text) {
+  if (!text) return NULL;
+  while (*text == ' ' || *text == '\t' || *text == '\r' || *text == '\n') text++;
+  size_t n = strlen(text);
+  while (n > 0) {
+    char c = text[n - 1];
+    if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
+      text[--n] = '\0';
+    } else {
+      break;
+    }
+  }
+  return text;
+}
+
+static void csv_append_token(char *csv, size_t csv_size, const char *token) {
+  if (!csv || csv_size == 0 || !token || !token[0]) return;
+  if (strstr(csv, token) != NULL) return;
+  if (csv[0]) strncat(csv, ",", csv_size - strlen(csv) - 1);
+  strncat(csv, token, csv_size - strlen(csv) - 1);
 }
 
 static int endpoint_is_queryable(const char *endpoint) {
@@ -328,6 +331,71 @@ static int role_contains_token(const char *role, const char *token) {
     p = next + 1;
   }
   return 0;
+}
+
+static void role_add_token(char *role, size_t role_size, const char *token) {
+  if (!role || role_size == 0 || !token || !*token) return;
+  if (strcmp(role, "UNKNOWN") == 0 || strcmp(role, "NONE") == 0 || role[0] == '\0') {
+    snprintf(role, role_size, "%s", token);
+    return;
+  }
+  if (role_contains_token(role, token)) return;
+
+  size_t cur = strlen(role);
+  size_t add = strlen(token) + 1;
+  if (cur + add >= role_size) return;
+  role[cur] = '+';
+  role[cur + 1] = '\0';
+  strncat(role, token, role_size - strlen(role) - 1);
+}
+
+static void infer_publisher_from_sub_target(struct zcm_broker *b, const char *target) {
+  if (!b || !target || !target[0]) return;
+
+  char copy[256] = {0};
+  char key[256] = {0};
+  int port = -1;
+  snprintf(copy, sizeof(copy), "%s", target);
+  char *last_colon = strrchr(copy, ':');
+  if (last_colon && last_colon[1]) {
+    int parsed_port = -1;
+    if (parse_int_text(last_colon + 1, &parsed_port) == 0 &&
+        parsed_port >= 1 && parsed_port <= 65535) {
+      *last_colon = '\0';
+      snprintf(key, sizeof(key), "%s", copy);
+      port = parsed_port;
+    }
+  }
+  if (key[0] == '\0') snprintf(key, sizeof(key), "%s", copy);
+
+  if (key[0]) {
+    struct zcm_broker_entry *by_name = entry_find(b, key);
+    if (by_name) {
+      if (port > 0) by_name->pub_port = port;
+      role_add_token(by_name->role, sizeof(by_name->role), "PUB");
+      return;
+    }
+  }
+
+  if (port <= 0) return;
+  struct zcm_broker_entry *match = NULL;
+  int matches = 0;
+  for (struct zcm_broker_entry *e = b->head; e; e = e->next) {
+    char endpoint[512] = {0};
+    char host[256] = {0};
+    int ep_port = 0;
+    entry_effective_endpoint(e, endpoint, sizeof(endpoint));
+    if (endpoint_tcp_parse_host_port(endpoint, host, sizeof(host), &ep_port) != 0) continue;
+    if (ep_port != port) continue;
+    if (key[0] && !host_equivalent(host, key)) continue;
+    match = e;
+    matches++;
+    if (matches > 1) return;
+  }
+  if (matches == 1 && match) {
+    match->pub_port = port;
+    role_add_token(match->role, sizeof(match->role), "PUB");
+  }
 }
 
 static int role_is_valid(const char *role) {
@@ -471,17 +539,6 @@ static int entry_prune_stale_local(struct zcm_broker *b) {
 
   while (e) {
     if (entry_is_stale_local(e)) {
-      /* PID-based liveness can be wrong across PID namespaces. If control is
-       * still reachable, keep the entry and trust active endpoint behavior. */
-      if (b && b->ctx &&
-          e->ctrl_endpoint && e->ctrl_endpoint[0] &&
-          endpoint_is_queryable(e->ctrl_endpoint) &&
-          query_proc_ping_ok(b->ctx, e->ctrl_endpoint)) {
-        prev = e;
-        e = e->next;
-        continue;
-      }
-
       struct zcm_broker_entry *dead = e;
       if (prev) prev->next = e->next;
       else b->head = e->next;
@@ -497,62 +554,6 @@ static int entry_prune_stale_local(struct zcm_broker *b) {
   return removed;
 }
 
-static int entry_prune_expired_legacy(struct zcm_broker *b) {
-  int removed = 0;
-  uint64_t now = monotonic_ms();
-  struct zcm_broker_entry *prev = NULL;
-  struct zcm_broker_entry *e = NULL;
-
-  if (!b || now == 0) return 0;
-  e = b->head;
-  while (e) {
-    int legacy_candidate = 0;
-    if (e->is_legacy) legacy_candidate = 1;
-    else if (strcmp(e->name, "zcmbroker") != 0 &&
-             e->pid <= 0 &&
-             (!e->ctrl_endpoint || !e->ctrl_endpoint[0])) {
-      legacy_candidate = 1;
-      e->is_legacy = 1;
-    }
-
-    if (!legacy_candidate) {
-      prev = e;
-      e = e->next;
-      continue;
-    }
-    if (e->legacy_expires_at_ms == 0) {
-      e->legacy_expires_at_ms = now + (uint64_t)b->legacy_ttl_ms;
-    }
-    if (now < e->legacy_expires_at_ms) {
-      prev = e;
-      e = e->next;
-      continue;
-    }
-
-    /* Lease expired: keep it only if inferred control endpoint is alive. */
-    int alive = 0;
-    char inferred_ctrl[512] = {0};
-    if (infer_ctrl_endpoint_for_entry(e, inferred_ctrl, sizeof(inferred_ctrl)) == 0) {
-      alive = query_proc_ping_ok(b->ctx, inferred_ctrl);
-    }
-    if (alive) {
-      entry_refresh_legacy_lease(b, e);
-      prev = e;
-      e = e->next;
-      continue;
-    }
-
-    struct zcm_broker_entry *dead = e;
-    if (prev) prev->next = e->next;
-    else b->head = e->next;
-    e = e->next;
-    entry_free(dead);
-    removed++;
-  }
-
-  return removed;
-}
-
 static struct zcm_broker_entry *entry_find(struct zcm_broker *b, const char *name) {
   for (struct zcm_broker_entry *e = b->head; e; e = e->next) {
     if (strcmp(e->name, name) == 0) return e;
@@ -561,126 +562,50 @@ static struct zcm_broker_entry *entry_find(struct zcm_broker *b, const char *nam
 }
 
 /*
- * Register a basic name -> endpoint entry.
+ * Register a broker-internal entry.
  * Return codes:
  *   0  success (new or idempotent same endpoint)
  *   1  duplicate name with conflicting endpoint/owner
  *  -1  allocation/internal error
  */
 static int entry_set(struct zcm_broker *b, const char *name, const char *endpoint) {
+  const char *host = "127.0.0.1";
+  int pid = (int)getpid();
   struct zcm_broker_entry *e = entry_find(b, name);
   if (e) {
-    if (e->endpoint && strcmp(e->endpoint, endpoint) == 0) return 0;
+    if (e->endpoint && strcmp(e->endpoint, endpoint) == 0 &&
+        e->ctrl_endpoint && strcmp(e->ctrl_endpoint, endpoint) == 0 &&
+        e->host && strcmp(e->host, host) == 0 &&
+        e->pid == pid) {
+      return 0;
+    }
     return 1;
   }
 
   e = (struct zcm_broker_entry *)calloc(1, sizeof(*e));
   if (!e) return -1;
   e->name = strdup(name);
+  e->host = strdup(host);
   if (!e->name) {
-    free(e);
-    return -1;
-  }
-  e->endpoint = strdup(endpoint);
-  if (!e->endpoint) {
-    free(e->name);
-    free(e);
-    return -1;
-  }
-  e->pid = 0;
-  e->is_legacy = 0;
-  e->legacy_expires_at_ms = 0;
-  entry_reset_metrics(e);
-  if (endpoint_has_scheme(endpoint, "sub://")) {
-    snprintf(e->role, sizeof(e->role), "SUB");
-  }
-  e->next = b->head;
-  b->head = e;
-  return 0;
-}
-
-static int entry_set_legacy(struct zcm_broker *b, const char *name,
-                            const char *endpoint, const char *peer_host) {
-  struct zcm_broker_entry *e = NULL;
-  const char *effective_endpoint = endpoint;
-  char normalized_endpoint[512] = {0};
-  if (!b || !name || !*name || !endpoint || !*endpoint) return -1;
-
-  if (peer_host && peer_host[0] && host_is_connectable(peer_host)) {
-    char ep_host[256] = {0};
-    int ep_port = 0;
-    if (endpoint_tcp_parse_host_port(endpoint, ep_host, sizeof(ep_host), &ep_port) == 0 &&
-        !host_equivalent(ep_host, peer_host)) {
-      if (build_tcp_endpoint_text(peer_host, ep_port,
-                                  normalized_endpoint, sizeof(normalized_endpoint)) == 0) {
-        effective_endpoint = normalized_endpoint;
-      }
-    }
-  }
-
-  e = entry_find(b, name);
-  if (e && !e->is_legacy) {
-    /* REGISTER_EX owner is authoritative. */
-    return 1;
-  }
-
-  if (e) {
-    if (e->host && e->host[0] && peer_host && peer_host[0] &&
-        !host_equivalent(e->host, peer_host)) {
-      return 1;
-    }
-
-    if ((!e->host || !e->host[0]) && peer_host && peer_host[0]) {
-      char *h = strdup(peer_host);
-      if (!h) return -1;
-      free(e->host);
-      e->host = h;
-    }
-
-    if (!e->endpoint || strcmp(e->endpoint, effective_endpoint) != 0) {
-      char *new_endpoint = strdup(effective_endpoint);
-      if (!new_endpoint) return -1;
-      free(e->endpoint);
-      e->endpoint = new_endpoint;
-    }
-
-    e->is_legacy = 1;
-    e->pid = 0;
-    if (e->ctrl_endpoint) {
-      free(e->ctrl_endpoint);
-      e->ctrl_endpoint = NULL;
-    }
-    if (endpoint_has_scheme(endpoint, "sub://")) {
-      snprintf(e->role, sizeof(e->role), "SUB");
-    }
-    e->remote_probe_at_ms = 0;
-    e->remote_probe_failures = 0;
-    entry_refresh_legacy_lease(b, e);
-    return 0;
-  }
-
-  e = (struct zcm_broker_entry *)calloc(1, sizeof(*e));
-  if (!e) return -1;
-  e->name = strdup(name);
-  e->endpoint = strdup(effective_endpoint);
-  e->host = (peer_host && peer_host[0]) ? strdup(peer_host) : NULL;
-  if (!e->name || !e->endpoint || ((peer_host && peer_host[0]) && !e->host)) {
-    free(e->name);
-    free(e->endpoint);
     free(e->host);
     free(e);
     return -1;
   }
-  e->pid = 0;
-  e->is_legacy = 1;
-  e->legacy_expires_at_ms = 0;
+  e->endpoint = strdup(endpoint);
+  e->ctrl_endpoint = strdup(endpoint);
+  if (!e->endpoint || !e->ctrl_endpoint || !e->host) {
+    free(e->name);
+    free(e->endpoint);
+    free(e->ctrl_endpoint);
+    free(e->host);
+    free(e);
+    return -1;
+  }
+  e->pid = pid;
   entry_reset_metrics(e);
   if (endpoint_has_scheme(endpoint, "sub://")) {
     snprintf(e->role, sizeof(e->role), "SUB");
   }
-  e->remote_probe_at_ms = 0;
-  e->remote_probe_failures = 0;
-  entry_refresh_legacy_lease(b, e);
   e->next = b->head;
   b->head = e;
   return 0;
@@ -694,23 +619,25 @@ static int entry_set_legacy(struct zcm_broker *b, const char *name,
  *  -1  allocation/internal error
  */
 static int entry_set_ex(struct zcm_broker *b, const char *name, const char *endpoint,
-                        const char *ctrl_endpoint, const char *host, int pid) {
+                        const char *ctrl_endpoint, const char *host, int pid,
+                        const char *role, int pub_port, int push_port) {
+  if (!b || !name || !*name || !endpoint || !*endpoint ||
+      !ctrl_endpoint || !*ctrl_endpoint || !host || !*host ||
+      pid <= 0 || !role || !*role) {
+    return -1;
+  }
+
   struct zcm_broker_entry *e = entry_find(b, name);
   if (e && entry_is_stale_local(e)) {
     (void)entry_remove(b, name);
     e = NULL;
   }
   if (e) {
-    int same_owner = 0;
-    if (e->pid > 0 && pid > 0 && e->pid == pid &&
-        e->host && host && host_equivalent(e->host, host)) {
-      same_owner = 1;
-    } else if (e->is_legacy) {
-      if ((!e->host || !e->host[0]) || (host && host_equivalent(e->host, host))) {
-        same_owner = 1;
-      }
+    /* Accept same-name takeover when host matches, even if PID changed.
+     * This avoids permanent DUPLICATE locks after process restart/crash. */
+    if (!(e->host && host && host_equivalent(e->host, host))) {
+      return 1;
     }
-    if (!same_owner) return 1;
   }
 
   char *new_endpoint = endpoint ? strdup(endpoint) : NULL;
@@ -751,16 +678,9 @@ static int entry_set_ex(struct zcm_broker *b, const char *name, const char *endp
   e->ctrl_endpoint = new_ctrl;
   e->host = new_host;
   e->pid = pid;
-  if (pid <= 0 || !ctrl_endpoint || !*ctrl_endpoint) {
-    e->is_legacy = 1;
-    entry_refresh_legacy_lease(b, e);
-  } else {
-    e->is_legacy = 0;
-    e->legacy_expires_at_ms = 0;
-  }
-  if (endpoint_has_scheme(endpoint, "sub://")) {
-    snprintf(e->role, sizeof(e->role), "SUB");
-  }
+  snprintf(e->role, sizeof(e->role), "%s", role);
+  e->pub_port = (pub_port > 0 ? pub_port : -1);
+  e->push_port = (push_port > 0 ? push_port : -1);
   e->remote_probe_at_ms = 0;
   e->remote_probe_failures = 0;
   return 0;
@@ -830,7 +750,7 @@ static int query_proc_command_once(zcm_context_t *ctx, const char *endpoint,
   int rc = -1;
   zcm_socket_t *req = zcm_socket_new(ctx, ZCM_SOCK_REQ);
   if (!req) return -1;
-  zcm_socket_set_timeouts(req, 250);
+  zcm_socket_set_timeouts(req, 50);
   if (zcm_socket_connect(req, endpoint) != 0) goto out;
 
   zcm_msg_t *q = zcm_msg_new();
@@ -908,25 +828,6 @@ static int query_proc_ping_ok(zcm_context_t *ctx, const char *endpoint) {
   return strcmp(text, "PONG") == 0;
 }
 
-static int infer_ctrl_endpoint_for_entry(const struct zcm_broker_entry *e,
-                                         char *out_ctrl_endpoint,
-                                         size_t out_size) {
-  char ep_host[256] = {0};
-  int ep_port = 0;
-  const char *ctrl_host = NULL;
-
-  if (!e || !e->endpoint || !*e->endpoint || !out_ctrl_endpoint || out_size == 0) return -1;
-  out_ctrl_endpoint[0] = '\0';
-  if (endpoint_tcp_parse_host_port(e->endpoint, ep_host, sizeof(ep_host), &ep_port) != 0) return -1;
-  if (ep_port < 1 || ep_port >= 65535) return -1;
-
-  ctrl_host = ep_host;
-  if (e->host && host_is_connectable(e->host)) ctrl_host = e->host;
-  if (!host_is_connectable(ctrl_host)) return -1;
-
-  return build_tcp_endpoint_text(ctrl_host, ep_port + 1, out_ctrl_endpoint, out_size);
-}
-
 static int query_proc_command_with_ctrl_fallback(zcm_context_t *ctx,
                                                  const char *endpoint,
                                                  const char *ctrl_endpoint,
@@ -966,11 +867,6 @@ static int entry_prune_stale_remote_ctrl(struct zcm_broker *b) {
         endpoint_is_queryable(e->ctrl_endpoint)) {
       should_check = 1;
       snprintf(probe_endpoint, sizeof(probe_endpoint), "%s", e->ctrl_endpoint);
-    } else if (strcmp(e->name, "zcmbroker") != 0 &&
-               (!e->ctrl_endpoint || !e->ctrl_endpoint[0])) {
-      if (infer_ctrl_endpoint_for_entry(e, probe_endpoint, sizeof(probe_endpoint)) == 0) {
-        should_check = 1;
-      }
     }
 
     if (should_check) {
@@ -1037,10 +933,6 @@ static void entry_refresh_metrics(struct zcm_broker *b, struct zcm_broker_entry 
   if ((!e->role[0] || strcmp(e->role, "UNKNOWN") == 0) && e->endpoint) {
     if (endpoint_has_scheme(e->endpoint, "sub://")) {
       snprintf(e->role, sizeof(e->role), "SUB");
-    } else if ((!e->ctrl_endpoint || !e->ctrl_endpoint[0]) &&
-               (!e->host || !e->host[0]) &&
-               e->pid <= 0) {
-      snprintf(e->role, sizeof(e->role), "EXTERNAL");
     }
   }
 
@@ -1049,102 +941,119 @@ static void entry_refresh_metrics(struct zcm_broker *b, struct zcm_broker_entry 
     return;
   }
 
-  /*
-   * Entries without an explicit control endpoint must not be synchronously
-   * probed with DATA_* from the broker LIST_EX path. Legacy REGISTER clients
-   * may expose non-REQ/REP data endpoints here and probing can stall names.
-   * Keep current role/metrics (for example from METRICS) and return fast.
-   */
   if (!e->ctrl_endpoint || !e->ctrl_endpoint[0]) {
     return;
   }
 
-  /*
-   * Avoid synchronous cross-host probing on the broker request thread.
-   * Remote nodes should report metrics via METRICS; probing them here can stall
-   * LIST_EX when a remote process disappears without unregistering.
-   */
   {
-    char probe_host[256] = {0};
-    int probe_port = 0;
-    if (e->host && e->host[0]) {
-      snprintf(probe_host, sizeof(probe_host), "%s", e->host);
-    } else if (e->endpoint &&
-               endpoint_tcp_parse_host_port(e->endpoint, probe_host, sizeof(probe_host), &probe_port) == 0) {
-      (void)probe_port;
-    }
-    if (probe_host[0] && !host_is_local(probe_host)) {
+    int role_known = (e->role[0] && strcmp(e->role, "UNKNOWN") != 0 && strcmp(e->role, "NONE") != 0);
+    int role_pub_complete = !role_contains_token(e->role, "PUB") || e->pub_port > 0;
+    int role_push_complete = !role_contains_token(e->role, "PUSH") || e->push_port > 0;
+    int role_sub = role_contains_token(e->role, "SUB");
+    if (role_known && role_pub_complete && role_push_complete && !role_sub) {
       return;
     }
   }
 
   char text[128] = {0};
   int code = 0;
-  int role_probe_ok = 0;
+  int port = -1;
 
   if (query_proc_command_with_ctrl_fallback(b->ctx, e->endpoint, e->ctrl_endpoint,
                                             "DATA_ROLE", text, sizeof(text), &code) == 0 &&
       code == 200 && role_is_valid(text)) {
     snprintf(e->role, sizeof(e->role), "%s", text);
-    role_probe_ok = 1;
-  }
-
-  if (!role_probe_ok) {
-    return;
   }
 
   if (query_proc_command_with_ctrl_fallback(b->ctx, e->endpoint, e->ctrl_endpoint,
                                             "DATA_PORT_PUB", text, sizeof(text), &code) == 0 &&
       code == 200) {
-    int v = -1;
-    if (parse_int_text(text, &v) == 0 && v > 0) e->pub_port = v;
+    if (parse_int_text(text, &port) == 0 && port > 0) e->pub_port = port;
+  } else if (query_proc_command_with_ctrl_fallback(b->ctx, e->endpoint, e->ctrl_endpoint,
+                                                   "DATA_PORT", text, sizeof(text), &code) == 0 &&
+             code == 200) {
+    if (parse_int_text(text, &port) == 0 && port > 0) e->pub_port = port;
   }
 
   if (query_proc_command_with_ctrl_fallback(b->ctx, e->endpoint, e->ctrl_endpoint,
                                             "DATA_PORT_PUSH", text, sizeof(text), &code) == 0 &&
       code == 200) {
-    int v = -1;
-    if (parse_int_text(text, &v) == 0 && v > 0) e->push_port = v;
+    if (parse_int_text(text, &port) == 0 && port > 0) e->push_port = port;
   }
 
-  if (query_proc_command_with_ctrl_fallback(b->ctx, e->endpoint, e->ctrl_endpoint,
-                                            "DATA_PAYLOAD_BYTES_PUB", text, sizeof(text), &code) == 0 &&
-      code == 200) {
-    int v = -1;
-    if (parse_int_text(text, &v) == 0 && v >= 0) e->pub_bytes = v;
+  if (e->pub_port > 0) role_add_token(e->role, sizeof(e->role), "PUB");
+  if (e->push_port > 0) role_add_token(e->role, sizeof(e->role), "PUSH");
+  if (e->endpoint && endpoint_has_scheme(e->endpoint, "sub://")) {
+    role_add_token(e->role, sizeof(e->role), "SUB");
   }
 
-  if (query_proc_command_with_ctrl_fallback(b->ctx, e->endpoint, e->ctrl_endpoint,
-                                            "DATA_PAYLOAD_BYTES_SUB", text, sizeof(text), &code) == 0 &&
-      code == 200) {
-    int v = -1;
-    if (parse_int_text(text, &v) == 0 && v >= 0) e->sub_bytes = v;
-  }
+  if (role_contains_token(e->role, "SUB")) {
+    char targets_reply[512] = {0};
+    if (query_proc_command_with_ctrl_fallback(b->ctx, e->endpoint, e->ctrl_endpoint,
+                                              "DATA_SUB_TARGETS",
+                                              targets_reply, sizeof(targets_reply), &code) == 0 &&
+        code == 200 && targets_reply[0]) {
+      char decorated[sizeof(e->role)];
+      char copy[sizeof(targets_reply)];
+      decorated[0] = '\0';
+      snprintf(copy, sizeof(copy), "%s", targets_reply);
+      char *saveptr = NULL;
+      for (char *tok = strtok_r(copy, ",;", &saveptr);
+           tok;
+           tok = strtok_r(NULL, ",;", &saveptr)) {
+        char *item = trim_ascii_ws_inplace(tok);
+        if (!item || !item[0]) continue;
+        if (strncmp(item, "SUB:", 4) == 0) item += 4;
+        item = trim_ascii_ws_inplace(item);
+        if (!item || !item[0]) continue;
 
-  if (query_proc_command_with_ctrl_fallback(b->ctx, e->endpoint, e->ctrl_endpoint,
-                                            "DATA_PAYLOAD_BYTES_PUSH", text, sizeof(text), &code) == 0 &&
-      code == 200) {
-    int v = -1;
-    if (parse_int_text(text, &v) == 0 && v >= 0) e->push_bytes = v;
-  }
-
-  if (query_proc_command_with_ctrl_fallback(b->ctx, e->endpoint, e->ctrl_endpoint,
-                                            "DATA_PAYLOAD_BYTES_PULL", text, sizeof(text), &code) == 0 &&
-      code == 200) {
-    int v = -1;
-    if (parse_int_text(text, &v) == 0 && v >= 0) e->pull_bytes = v;
-  }
-
-  if (e->pub_port > 0 && !role_contains_token(e->role, "PUB")) {
-    if (strcmp(e->role, "UNKNOWN") == 0 || strcmp(e->role, "NONE") == 0 || !e->role[0]) {
-      snprintf(e->role, sizeof(e->role), "PUB");
+        char role_item[320] = {0};
+        snprintf(role_item, sizeof(role_item), "SUB:%s", item);
+        csv_append_token(decorated, sizeof(decorated), role_item);
+        infer_publisher_from_sub_target(b, item);
+      }
+      if (decorated[0]) snprintf(e->role, sizeof(e->role), "%s", decorated);
     }
   }
-  if (e->push_port > 0 && !role_contains_token(e->role, "PUSH")) {
-    if (strcmp(e->role, "UNKNOWN") == 0 || strcmp(e->role, "NONE") == 0 || !e->role[0]) {
-      snprintf(e->role, sizeof(e->role), "PUSH");
+}
+
+static int broker_sock_has_more(void *sock) {
+  int64_t more = 0;
+  size_t more_size = sizeof(more);
+  if (!sock) return 0;
+  if (zmq_getsockopt(sock, ZMQ_RCVMORE, &more, &more_size) != 0) return 0;
+  return more ? 1 : 0;
+}
+
+static void broker_sock_drain_remaining_parts(void *sock) {
+  while (broker_sock_has_more(sock)) {
+    zmq_msg_t part;
+    zmq_msg_init(&part);
+    if (zmq_msg_recv(&part, sock, 0) < 0) {
+      zmq_msg_close(&part);
+      break;
     }
+    zmq_msg_close(&part);
   }
+}
+
+static int broker_recv_part_text(void *sock, char *out, size_t out_size) {
+  if (!sock || !out || out_size == 0) return -1;
+  out[0] = '\0';
+  if (!broker_sock_has_more(sock)) return -1;
+
+  zmq_msg_t part;
+  zmq_msg_init(&part);
+  if (zmq_msg_recv(&part, sock, 0) < 0) {
+    zmq_msg_close(&part);
+    return -1;
+  }
+  size_t n = zmq_msg_size(&part);
+  if (n >= out_size) n = out_size - 1;
+  memcpy(out, zmq_msg_data(&part), n);
+  out[n] = '\0';
+  zmq_msg_close(&part);
+  return 0;
 }
 
 static void *broker_thread(void *arg) {
@@ -1172,95 +1081,49 @@ static void *broker_thread(void *arg) {
     memcpy(cmd, zmq_msg_data(&part), cmd_len);
     zmq_msg_close(&part);
 
+#define RECV_PART_OR_REPLY_ERR(dst)                                            \
+    do {                                                                        \
+      if (broker_recv_part_text(sock, (dst), sizeof(dst)) != 0) {              \
+        broker_sock_drain_remaining_parts(sock);                                \
+        zmq_send(sock, "ERR_MALFORMED", 13, 0);                                \
+        continue;                                                               \
+      }                                                                         \
+    } while (0)
+
     (void)entry_prune_stale_local(b);
-    (void)entry_prune_expired_legacy(b);
-    if (strcmp(cmd, "INFO") == 0 ||
-        strcmp(cmd, "LIST_EX") == 0 ||
-        strcmp(cmd, "LIST") == 0) {
-      (void)entry_prune_stale_remote_ctrl(b);
-    }
 
     if (strcmp(cmd, "REGISTER") == 0) {
       char name[256] = {0};
       char endpoint[512] = {0};
+      RECV_PART_OR_REPLY_ERR(name);
+      RECV_PART_OR_REPLY_ERR(endpoint);
+      broker_sock_drain_remaining_parts(sock);
 
-      zmq_msg_init(&part);
-      rc = zmq_msg_recv(&part, sock, 0);
-      if (rc < 0) { zmq_msg_close(&part); continue; }
-      size_t nlen = zmq_msg_size(&part);
-      if (nlen >= sizeof(name)) nlen = sizeof(name) - 1;
-      memcpy(name, zmq_msg_data(&part), nlen);
-      zmq_msg_close(&part);
-
-      zmq_msg_init(&part);
-      rc = zmq_msg_recv(&part, sock, 0);
-      if (rc < 0) { zmq_msg_close(&part); continue; }
-      size_t elen = zmq_msg_size(&part);
-      if (elen >= sizeof(endpoint)) elen = sizeof(endpoint) - 1;
-      memcpy(endpoint, zmq_msg_data(&part), elen);
-      zmq_msg_close(&part);
-
-      int reg_rc = entry_set_legacy(b, name, endpoint, peer_host);
       if (b->trace_reg) {
-        fprintf(stderr, "zcm_broker: REGISTER name=%s peer=%s endpoint=%s rc=%s\n",
+        fprintf(stderr, "zcm_broker: REGISTER name=%s peer=%s endpoint=%s rc=UNSUPPORTED\n",
                 name,
                 (peer_host[0] ? peer_host : "-"),
-                endpoint,
-                (reg_rc == 0 ? "OK" : (reg_rc == 1 ? "DUPLICATE" : "ERR")));
+                endpoint);
       }
-      if (reg_rc == 0) {
-        zmq_send(sock, "OK", 2, 0);
-      } else if (reg_rc == 1) {
-        zmq_send(sock, "DUPLICATE", 9, 0);
-      } else {
-        zmq_send(sock, "ERR", 3, 0);
-      }
+      zmq_send(sock, "ERR_UNSUPPORTED", 15, 0);
     } else if (strcmp(cmd, "REGISTER_EX") == 0) {
       char name[256] = {0};
       char endpoint[512] = {0};
       char ctrl_ep[512] = {0};
       char host[256] = {0};
       char pid_str[32] = {0};
-
-      zmq_msg_init(&part);
-      rc = zmq_msg_recv(&part, sock, 0);
-      if (rc < 0) { zmq_msg_close(&part); continue; }
-      size_t nlen = zmq_msg_size(&part);
-      if (nlen >= sizeof(name)) nlen = sizeof(name) - 1;
-      memcpy(name, zmq_msg_data(&part), nlen);
-      zmq_msg_close(&part);
-
-      zmq_msg_init(&part);
-      rc = zmq_msg_recv(&part, sock, 0);
-      if (rc < 0) { zmq_msg_close(&part); continue; }
-      size_t elen = zmq_msg_size(&part);
-      if (elen >= sizeof(endpoint)) elen = sizeof(endpoint) - 1;
-      memcpy(endpoint, zmq_msg_data(&part), elen);
-      zmq_msg_close(&part);
-
-      zmq_msg_init(&part);
-      rc = zmq_msg_recv(&part, sock, 0);
-      if (rc < 0) { zmq_msg_close(&part); continue; }
-      size_t clen = zmq_msg_size(&part);
-      if (clen >= sizeof(ctrl_ep)) clen = sizeof(ctrl_ep) - 1;
-      memcpy(ctrl_ep, zmq_msg_data(&part), clen);
-      zmq_msg_close(&part);
-
-      zmq_msg_init(&part);
-      rc = zmq_msg_recv(&part, sock, 0);
-      if (rc < 0) { zmq_msg_close(&part); continue; }
-      size_t hlen = zmq_msg_size(&part);
-      if (hlen >= sizeof(host)) hlen = sizeof(host) - 1;
-      memcpy(host, zmq_msg_data(&part), hlen);
-      zmq_msg_close(&part);
-
-      zmq_msg_init(&part);
-      rc = zmq_msg_recv(&part, sock, 0);
-      if (rc < 0) { zmq_msg_close(&part); continue; }
-      size_t plen = zmq_msg_size(&part);
-      if (plen >= sizeof(pid_str)) plen = sizeof(pid_str) - 1;
-      memcpy(pid_str, zmq_msg_data(&part), plen);
-      zmq_msg_close(&part);
+      char role[64] = {0};
+      char pub_port_str[32] = {0};
+      char push_port_str[32] = {0};
+      RECV_PART_OR_REPLY_ERR(name);
+      RECV_PART_OR_REPLY_ERR(endpoint);
+      RECV_PART_OR_REPLY_ERR(ctrl_ep);
+      RECV_PART_OR_REPLY_ERR(host);
+      RECV_PART_OR_REPLY_ERR(pid_str);
+      RECV_PART_OR_REPLY_ERR(role);
+      RECV_PART_OR_REPLY_ERR(pub_port_str);
+      RECV_PART_OR_REPLY_ERR(push_port_str);
+      broker_sock_drain_remaining_parts(sock);
 
       const char *effective_host = prefer_host_for_registration(host, peer_host);
       char effective_endpoint[512] = {0};
@@ -1269,13 +1132,56 @@ static void *broker_thread(void *arg) {
                                            effective_endpoint, sizeof(effective_endpoint));
       normalize_registration_endpoint_host(ctrl_ep, host, effective_host,
                                            effective_ctrl_ep, sizeof(effective_ctrl_ep));
-      int pid = atoi(pid_str);
+      int pid = 0;
+      int pub_port = -1;
+      int push_port = -1;
+      if (parse_int_text(pid_str, &pid) != 0 || pid <= 0 ||
+          !role[0] || !role_is_valid(role) ||
+          parse_int_text(pub_port_str, &pub_port) != 0 ||
+          parse_int_text(push_port_str, &push_port) != 0 ||
+          pub_port > 65535 || push_port > 65535) {
+        if (b->trace_reg) {
+          fprintf(stderr,
+                  "zcm_broker: REGISTER_EX name=%s peer=%s adv_host=%s endpoint=%s ctrl=%s pid=%s role=%s pub_port=%s push_port=%s rc=ERR_MALFORMED\n",
+                  name,
+                  (peer_host[0] ? peer_host : "-"),
+                  (host[0] ? host : "-"),
+                  endpoint,
+                  ctrl_ep,
+                  (pid_str[0] ? pid_str : "-"),
+                  (role[0] ? role : "-"),
+                  (pub_port_str[0] ? pub_port_str : "-"),
+                  (push_port_str[0] ? push_port_str : "-"));
+        }
+        zmq_send(sock, "ERR_MALFORMED", 13, 0);
+        continue;
+      }
+      if (pub_port <= 0) pub_port = -1;
+      if (push_port <= 0) push_port = -1;
+      if ((role_contains_token(role, "PUB") && pub_port <= 0) ||
+          (role_contains_token(role, "PUSH") && push_port <= 0)) {
+        if (b->trace_reg) {
+          fprintf(stderr,
+                  "zcm_broker: REGISTER_EX name=%s peer=%s adv_host=%s endpoint=%s ctrl=%s pid=%d role=%s pub_port=%d push_port=%d rc=ERR_MALFORMED\n",
+                  name,
+                  (peer_host[0] ? peer_host : "-"),
+                  (host[0] ? host : "-"),
+                  endpoint,
+                  ctrl_ep,
+                  pid,
+                  role,
+                  pub_port,
+                  push_port);
+        }
+        zmq_send(sock, "ERR_MALFORMED", 13, 0);
+        continue;
+      }
       int reg_rc = entry_set_ex(b, name, effective_endpoint[0] ? effective_endpoint : endpoint,
                                 effective_ctrl_ep[0] ? effective_ctrl_ep : ctrl_ep,
-                                effective_host, pid);
+                                effective_host, pid, role, pub_port, push_port);
       if (b->trace_reg) {
         fprintf(stderr,
-                "zcm_broker: REGISTER_EX name=%s peer=%s adv_host=%s eff_host=%s endpoint=%s ctrl=%s pid=%d rc=%s\n",
+                "zcm_broker: REGISTER_EX name=%s peer=%s adv_host=%s eff_host=%s endpoint=%s ctrl=%s pid=%d role=%s pub_port=%d push_port=%d rc=%s\n",
                 name,
                 (peer_host[0] ? peer_host : "-"),
                 (host[0] ? host : "-"),
@@ -1283,6 +1189,9 @@ static void *broker_thread(void *arg) {
                 (effective_endpoint[0] ? effective_endpoint : endpoint),
                 (effective_ctrl_ep[0] ? effective_ctrl_ep : ctrl_ep),
                 pid,
+                (role[0] ? role : "UNKNOWN"),
+                pub_port,
+                push_port,
                 (reg_rc == 0 ? "OK" : (reg_rc == 1 ? "DUPLICATE" : "ERR")));
       }
       if (reg_rc == 0) {
@@ -1294,13 +1203,8 @@ static void *broker_thread(void *arg) {
       }
     } else if (strcmp(cmd, "LOOKUP") == 0) {
       char name[256] = {0};
-      zmq_msg_init(&part);
-      rc = zmq_msg_recv(&part, sock, 0);
-      if (rc < 0) { zmq_msg_close(&part); continue; }
-      size_t nlen = zmq_msg_size(&part);
-      if (nlen >= sizeof(name)) nlen = sizeof(name) - 1;
-      memcpy(name, zmq_msg_data(&part), nlen);
-      zmq_msg_close(&part);
+      RECV_PART_OR_REPLY_ERR(name);
+      broker_sock_drain_remaining_parts(sock);
 
       struct zcm_broker_entry *e = entry_find(b, name);
       if (!e) {
@@ -1313,13 +1217,8 @@ static void *broker_thread(void *arg) {
       }
     } else if (strcmp(cmd, "INFO") == 0) {
       char name[256] = {0};
-      zmq_msg_init(&part);
-      rc = zmq_msg_recv(&part, sock, 0);
-      if (rc < 0) { zmq_msg_close(&part); continue; }
-      size_t nlen = zmq_msg_size(&part);
-      if (nlen >= sizeof(name)) nlen = sizeof(name) - 1;
-      memcpy(name, zmq_msg_data(&part), nlen);
-      zmq_msg_close(&part);
+      RECV_PART_OR_REPLY_ERR(name);
+      broker_sock_drain_remaining_parts(sock);
 
       struct zcm_broker_entry *e = entry_find(b, name);
       if (!e) {
@@ -1337,13 +1236,8 @@ static void *broker_thread(void *arg) {
       }
     } else if (strcmp(cmd, "UNREGISTER") == 0) {
       char name[256] = {0};
-      zmq_msg_init(&part);
-      rc = zmq_msg_recv(&part, sock, 0);
-      if (rc < 0) { zmq_msg_close(&part); continue; }
-      size_t nlen = zmq_msg_size(&part);
-      if (nlen >= sizeof(name)) nlen = sizeof(name) - 1;
-      memcpy(name, zmq_msg_data(&part), nlen);
-      zmq_msg_close(&part);
+      RECV_PART_OR_REPLY_ERR(name);
+      broker_sock_drain_remaining_parts(sock);
 
       int unreg_rc = entry_remove_by_peer(b, name, peer_host);
       if (b->trace_reg) {
@@ -1361,89 +1255,29 @@ static void *broker_thread(void *arg) {
       }
     } else if (strcmp(cmd, "METRICS") == 0) {
       char name[256] = {0};
-      char role[64] = {0};
+      char role[512] = {0};
       char pub_port_str[32] = {0};
       char push_port_str[32] = {0};
       char pub_bytes_str[32] = {0};
       char sub_bytes_str[32] = {0};
       char push_bytes_str[32] = {0};
       char pull_bytes_str[32] = {0};
-
-      zmq_msg_init(&part);
-      rc = zmq_msg_recv(&part, sock, 0);
-      if (rc < 0) { zmq_msg_close(&part); continue; }
-      size_t nlen = zmq_msg_size(&part);
-      if (nlen >= sizeof(name)) nlen = sizeof(name) - 1;
-      memcpy(name, zmq_msg_data(&part), nlen);
-      zmq_msg_close(&part);
-
-      zmq_msg_init(&part);
-      rc = zmq_msg_recv(&part, sock, 0);
-      if (rc < 0) { zmq_msg_close(&part); continue; }
-      size_t rlen = zmq_msg_size(&part);
-      if (rlen >= sizeof(role)) rlen = sizeof(role) - 1;
-      memcpy(role, zmq_msg_data(&part), rlen);
-      zmq_msg_close(&part);
-
-      zmq_msg_init(&part);
-      rc = zmq_msg_recv(&part, sock, 0);
-      if (rc < 0) { zmq_msg_close(&part); continue; }
-      size_t pplen = zmq_msg_size(&part);
-      if (pplen >= sizeof(pub_port_str)) pplen = sizeof(pub_port_str) - 1;
-      memcpy(pub_port_str, zmq_msg_data(&part), pplen);
-      zmq_msg_close(&part);
-
-      zmq_msg_init(&part);
-      rc = zmq_msg_recv(&part, sock, 0);
-      if (rc < 0) { zmq_msg_close(&part); continue; }
-      size_t pslen = zmq_msg_size(&part);
-      if (pslen >= sizeof(push_port_str)) pslen = sizeof(push_port_str) - 1;
-      memcpy(push_port_str, zmq_msg_data(&part), pslen);
-      zmq_msg_close(&part);
-
-      zmq_msg_init(&part);
-      rc = zmq_msg_recv(&part, sock, 0);
-      if (rc < 0) { zmq_msg_close(&part); continue; }
-      size_t pblen = zmq_msg_size(&part);
-      if (pblen >= sizeof(pub_bytes_str)) pblen = sizeof(pub_bytes_str) - 1;
-      memcpy(pub_bytes_str, zmq_msg_data(&part), pblen);
-      zmq_msg_close(&part);
-
-      zmq_msg_init(&part);
-      rc = zmq_msg_recv(&part, sock, 0);
-      if (rc < 0) { zmq_msg_close(&part); continue; }
-      size_t sblen = zmq_msg_size(&part);
-      if (sblen >= sizeof(sub_bytes_str)) sblen = sizeof(sub_bytes_str) - 1;
-      memcpy(sub_bytes_str, zmq_msg_data(&part), sblen);
-      zmq_msg_close(&part);
-
-      zmq_msg_init(&part);
-      rc = zmq_msg_recv(&part, sock, 0);
-      if (rc < 0) { zmq_msg_close(&part); continue; }
-      size_t pb2len = zmq_msg_size(&part);
-      if (pb2len >= sizeof(push_bytes_str)) pb2len = sizeof(push_bytes_str) - 1;
-      memcpy(push_bytes_str, zmq_msg_data(&part), pb2len);
-      zmq_msg_close(&part);
-
-      zmq_msg_init(&part);
-      rc = zmq_msg_recv(&part, sock, 0);
-      if (rc < 0) { zmq_msg_close(&part); continue; }
-      size_t pllen = zmq_msg_size(&part);
-      if (pllen >= sizeof(pull_bytes_str)) pllen = sizeof(pull_bytes_str) - 1;
-      memcpy(pull_bytes_str, zmq_msg_data(&part), pllen);
-      zmq_msg_close(&part);
+      RECV_PART_OR_REPLY_ERR(name);
+      RECV_PART_OR_REPLY_ERR(role);
+      RECV_PART_OR_REPLY_ERR(pub_port_str);
+      RECV_PART_OR_REPLY_ERR(push_port_str);
+      RECV_PART_OR_REPLY_ERR(pub_bytes_str);
+      RECV_PART_OR_REPLY_ERR(sub_bytes_str);
+      RECV_PART_OR_REPLY_ERR(push_bytes_str);
+      RECV_PART_OR_REPLY_ERR(pull_bytes_str);
+      broker_sock_drain_remaining_parts(sock);
 
       struct zcm_broker_entry *e = entry_find(b, name);
       if (!e) {
         zmq_send(sock, "NOT_FOUND", 9, 0);
       } else {
-        if (role[0] && strcmp(role, "-") != 0) {
-          if (role_is_valid(role) ||
-              strcmp(role, "UNKNOWN") == 0 ||
-              strcmp(role, "BROKER") == 0 ||
-              strcmp(role, "EXTERNAL") == 0) {
-            snprintf(e->role, sizeof(e->role), "%s", role);
-          }
+        if (role[0] && strcmp(role, "-") != 0 && role_is_valid(role)) {
+          snprintf(e->role, sizeof(e->role), "%s", role);
         }
         int v = -1;
         if (parse_int_text(pub_port_str, &v) == 0) e->pub_port = v;
@@ -1455,18 +1289,20 @@ static void *broker_thread(void *arg) {
         zmq_send(sock, "OK", 2, 0);
       }
     } else if (strcmp(cmd, "PING") == 0) {
+      broker_sock_drain_remaining_parts(sock);
       zmq_send(sock, "PONG", 4, 0);
     } else if (strcmp(cmd, "STOP") == 0) {
+      broker_sock_drain_remaining_parts(sock);
       zmq_send(sock, "OK", 2, 0);
       b->running = 0;
     } else if (strcmp(cmd, "LIST_EX") == 0) {
+      broker_sock_drain_remaining_parts(sock);
       int count = 0;
       for (struct zcm_broker_entry *e = b->head; e; e = e->next) count++;
       zmq_send(sock, "OK", 2, ZMQ_SNDMORE);
       zmq_send(sock, &count, sizeof(count), (count > 0) ? ZMQ_SNDMORE : 0);
       int idx = 0;
       for (struct zcm_broker_entry *e = b->head; e; e = e->next) {
-        entry_refresh_metrics(b, e);
         char endpoint[512] = {0};
         char pub_port[32];
         char push_port[32];
@@ -1474,7 +1310,7 @@ static void *broker_thread(void *arg) {
         char sub_bytes[32];
         char push_bytes[32];
         char pull_bytes[32];
-        entry_effective_endpoint(e, endpoint, sizeof(endpoint));
+        entry_reqrep_endpoint(e, endpoint, sizeof(endpoint));
         snprintf(pub_port, sizeof(pub_port), "%d", e->pub_port);
         snprintf(push_port, sizeof(push_port), "%d", e->push_port);
         snprintf(pub_bytes, sizeof(pub_bytes), "%d", e->pub_bytes);
@@ -1496,6 +1332,7 @@ static void *broker_thread(void *arg) {
         idx++;
       }
     } else if (strcmp(cmd, "LIST") == 0) {
+      broker_sock_drain_remaining_parts(sock);
       int count = 0;
       for (struct zcm_broker_entry *e = b->head; e; e = e->next) count++;
       zmq_send(sock, "OK", 2, ZMQ_SNDMORE);
@@ -1509,8 +1346,11 @@ static void *broker_thread(void *arg) {
         zmq_send(sock, endpoint, strlen(endpoint), more);
         idx++;}
     } else {
+      broker_sock_drain_remaining_parts(sock);
       zmq_send(sock, "ERR", 3, 0);
     }
+
+#undef RECV_PART_OR_REPLY_ERR
   }
 
   zmq_close(sock);
@@ -1523,13 +1363,16 @@ zcm_broker_t *zcm_broker_start(zcm_context_t *ctx, const char *endpoint) {
   if (!b) return NULL;
   b->ctx = ctx;
   b->endpoint = strdup(endpoint);
-  b->legacy_ttl_ms = parse_legacy_ttl_ms_from_env();
   b->remote_probe_interval_ms = parse_remote_probe_interval_ms_from_env();
   b->remote_probe_failures_before_drop = parse_remote_probe_fails_from_env();
   b->trace_reg = parse_bool_env_default0("ZCM_BROKER_TRACE_REG");
   if (!b->endpoint) { free(b); return NULL; }
   /* Always register the broker itself so names list is never empty. */
   entry_set(b, "zcmbroker", b->endpoint);
+  {
+    struct zcm_broker_entry *self = entry_find(b, "zcmbroker");
+    if (self) snprintf(self->role, sizeof(self->role), "BROKER");
+  }
   b->running = 1;
   if (pthread_create(&b->thread, NULL, broker_thread, b) != 0) {
     free(b->endpoint);

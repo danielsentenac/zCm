@@ -69,16 +69,6 @@ zcm_node_t *zcm_node_new(struct zcm_context *ctx, const char *broker_endpoint);
 void zcm_node_free(zcm_node_t *node);
 
 /**
- * @brief Register a name to a data endpoint in the broker.
- *
- * @param node Node helper.
- * @param name Logical process/service name.
- * @param endpoint Data endpoint associated with `name`.
- * @return `0` on success, `-1` on failure.
- */
-int zcm_node_register(zcm_node_t *node, const char *name, const char *endpoint);
-
-/**
  * @brief Remove a previously registered name from the broker.
  *
  * @param node Node helper.
@@ -96,11 +86,15 @@ int zcm_node_unregister(zcm_node_t *node, const char *name);
  * @param ctrl_endpoint Control endpoint used for management actions.
  * @param host Hostname or IP advertised by the process.
  * @param pid Process ID.
+ * @param role Node role (`PUB`, `SUB`, `PUSH`, `PULL`, `NONE`, `UNKNOWN`, or combos like `PUB+SUB`).
+ * @param pub_port Published PUB port or `-1`.
+ * @param push_port Published PUSH port or `-1`.
  * @return `0` on success, `ZCM_NODE_REGISTER_EX_DUPLICATE` on duplicate name,
  *         `-1` on transport/internal failure.
  */
 int zcm_node_register_ex(zcm_node_t *node, const char *name, const char *endpoint,
-                         const char *ctrl_endpoint, const char *host, int pid);
+                         const char *ctrl_endpoint, const char *host, int pid,
+                         const char *role, int pub_port, int push_port);
 
 /**
  * @brief Resolve a registered name to its endpoint.
@@ -118,9 +112,6 @@ int zcm_node_lookup(zcm_node_t *node, const char *name,
  * @brief Fetch extended metadata for a registered name.
  *
  * Any output pointer can be `NULL` to skip that field.
- * When a legacy `REGISTER` entry has no explicit control endpoint, this call
- * attempts a default control endpoint inference for TCP endpoints
- * (`tcp://host:data_port+1`).
  *
  * @param node Node helper.
  * @param name Name to inspect.

@@ -79,121 +79,6 @@ static int recv_with_timeout(void *sock, void *buf, size_t len, int timeout_ms) 
   return n;
 }
 
-static int endpoint_tcp_parse_host_port(const char *endpoint,
-                                        char *out_host, size_t out_host_size,
-                                        int *out_port) {
-  if (!endpoint || !out_host || out_host_size == 0 || !out_port) return -1;
-  out_host[0] = '\0';
-  *out_port = 0;
-  if (strncmp(endpoint, "tcp://", 6) != 0) return -1;
-
-  const char *addr = endpoint + 6;
-  if (!*addr) return -1;
-
-  const char *host_begin = addr;
-  const char *host_end = NULL;
-  const char *port_text = NULL;
-  if (*addr == '[') {
-    host_begin = addr + 1;
-    host_end = strchr(host_begin, ']');
-    if (!host_end || host_end <= host_begin || host_end[1] != ':') return -1;
-    port_text = host_end + 2;
-  } else {
-    host_end = strrchr(addr, ':');
-    if (!host_end || host_end <= host_begin) return -1;
-    port_text = host_end + 1;
-  }
-  if (!port_text || !*port_text) return -1;
-
-  size_t host_len = (size_t)(host_end - host_begin);
-  if (host_len == 0) return -1;
-  if (host_len >= out_host_size) host_len = out_host_size - 1;
-  memcpy(out_host, host_begin, host_len);
-  out_host[host_len] = '\0';
-
-  char *end = NULL;
-  long p = strtol(port_text, &end, 10);
-  if (!end || *end != '\0' || p < 1 || p > 65535) return -1;
-  *out_port = (int)p;
-  return 0;
-}
-
-static int endpoint_data_parse_host_port(const char *endpoint,
-                                         char *out_host, size_t out_host_size,
-                                         int *out_port) {
-  if (!endpoint || !out_host || out_host_size == 0 || !out_port) return -1;
-  if (endpoint_tcp_parse_host_port(endpoint, out_host, out_host_size, out_port) == 0) return 0;
-
-  if (strncmp(endpoint, "sub://", 6) == 0) {
-    char tcp_ep[512] = {0};
-    snprintf(tcp_ep, sizeof(tcp_ep), "tcp://%s", endpoint + 6);
-    return endpoint_tcp_parse_host_port(tcp_ep, out_host, out_host_size, out_port);
-  }
-  return -1;
-}
-
-static int host_is_connectable(const char *host) {
-  if (!host || !*host) return 0;
-  if (strcmp(host, "*") == 0 ||
-      strcmp(host, "0.0.0.0") == 0 ||
-      strcmp(host, "::") == 0 ||
-      strcmp(host, "0:0:0:0:0:0:0:0") == 0) {
-    return 0;
-  }
-  return 1;
-}
-
-static int build_tcp_endpoint_text(const char *host, int port,
-                                   char *out, size_t out_size) {
-  if (!host || !*host || !out || out_size == 0) return -1;
-  if (port < 1 || port > 65535) return -1;
-
-  const int looks_ipv6 = strchr(host, ':') != NULL;
-  if (looks_ipv6 && host[0] != '[') {
-    snprintf(out, out_size, "tcp://[%s]:%d", host, port);
-  } else {
-    snprintf(out, out_size, "tcp://%s:%d", host, port);
-  }
-  return 0;
-}
-
-static int infer_default_ctrl_endpoint(const char *data_endpoint,
-                                       const char *host_hint,
-                                       char *out_ctrl, size_t out_ctrl_size) {
-  char host[256] = {0};
-  const char *ctrl_host = host;
-  int port = 0;
-
-  if (!out_ctrl || out_ctrl_size == 0) return -1;
-  out_ctrl[0] = '\0';
-  if (endpoint_data_parse_host_port(data_endpoint, host, sizeof(host), &port) != 0) return -1;
-  if (host_hint && host_hint[0] && host_is_connectable(host_hint)) ctrl_host = host_hint;
-  if (!host_is_connectable(ctrl_host)) return -1;
-  if (port >= 65535) return -1;
-  return build_tcp_endpoint_text(ctrl_host, port + 1, out_ctrl, out_ctrl_size);
-}
-
-int zcm_node_register(zcm_node_t *node, const char *name, const char *endpoint) {
-  if (!node || !name || !endpoint) return -1;
-  void *sock = zmq_socket(zcm_context_zmq(node->ctx), ZMQ_REQ);
-  if (!sock) return -1;
-  set_req_socket_options(sock, 1000);
-  int rc = zmq_connect(sock, node->broker_endpoint);
-  if (rc != 0) {
-    zmq_close(sock);
-    return -1;
-  }
-  if (send_frames_req(sock, "REGISTER", name, endpoint) != 0) {
-    zmq_close(sock);
-    return -1;
-  }
-  char reply[32] = {0};
-  int n = zmq_recv(sock, reply, sizeof(reply) - 1, 0);
-  zmq_close(sock);
-  if (n <= 0) return -1;
-  return (strncmp(reply, "OK", 2) == 0) ? 0 : -1;
-}
-
 int zcm_node_unregister(zcm_node_t *node, const char *name) {
   if (!node || !name) return -1;
   void *sock = zmq_socket(zcm_context_zmq(node->ctx), ZMQ_REQ);
@@ -215,8 +100,10 @@ int zcm_node_unregister(zcm_node_t *node, const char *name) {
 }
 
 int zcm_node_register_ex(zcm_node_t *node, const char *name, const char *endpoint,
-                         const char *ctrl_endpoint, const char *host, int pid) {
-  if (!node || !name || !endpoint || !ctrl_endpoint || !host) return -1;
+                         const char *ctrl_endpoint, const char *host, int pid,
+                         const char *role, int pub_port, int push_port) {
+  if (!node || !name || !endpoint || !ctrl_endpoint || !host || !role) return -1;
+  if (!name[0] || !endpoint[0] || !ctrl_endpoint[0] || !host[0] || pid <= 0 || !role[0]) return -1;
   void *sock = zmq_socket(zcm_context_zmq(node->ctx), ZMQ_REQ);
   if (!sock) return -1;
   set_req_socket_options(sock, 1000);
@@ -230,8 +117,15 @@ int zcm_node_register_ex(zcm_node_t *node, const char *name, const char *endpoin
   if (zmq_send(sock, ctrl_endpoint, strlen(ctrl_endpoint), ZMQ_SNDMORE) < 0) { zmq_close(sock); return -1; }
   if (zmq_send(sock, host, strlen(host), ZMQ_SNDMORE) < 0) { zmq_close(sock); return -1; }
   char pid_buf[32];
+  char pub_port_buf[32];
+  char push_port_buf[32];
   snprintf(pid_buf, sizeof(pid_buf), "%d", pid);
-  if (zmq_send(sock, pid_buf, strlen(pid_buf), 0) < 0) { zmq_close(sock); return -1; }
+  snprintf(pub_port_buf, sizeof(pub_port_buf), "%d", pub_port);
+  snprintf(push_port_buf, sizeof(push_port_buf), "%d", push_port);
+  if (zmq_send(sock, pid_buf, strlen(pid_buf), ZMQ_SNDMORE) < 0) { zmq_close(sock); return -1; }
+  if (zmq_send(sock, role, strlen(role), ZMQ_SNDMORE) < 0) { zmq_close(sock); return -1; }
+  if (zmq_send(sock, pub_port_buf, strlen(pub_port_buf), ZMQ_SNDMORE) < 0) { zmq_close(sock); return -1; }
+  if (zmq_send(sock, push_port_buf, strlen(push_port_buf), 0) < 0) { zmq_close(sock); return -1; }
   char reply[32] = {0};
   int n = zmq_recv(sock, reply, sizeof(reply) - 1, 0);
   zmq_close(sock);
@@ -284,14 +178,6 @@ int zcm_node_info(zcm_node_t *node, const char *name,
   if (n < 0) { zmq_close(sock); return -1; }
   pid_buf[n] = '\0';
   zmq_close(sock);
-
-  if (ctrl[0] == '\0') {
-    char inferred_ctrl[512] = {0};
-    if (infer_default_ctrl_endpoint(ep, host, inferred_ctrl, sizeof(inferred_ctrl)) == 0) {
-      strncpy(ctrl, inferred_ctrl, sizeof(ctrl) - 1);
-      ctrl[sizeof(ctrl) - 1] = '\0';
-    }
-  }
 
   if (out_endpoint && out_ep_size) {
     strncpy(out_endpoint, ep, out_ep_size - 1);

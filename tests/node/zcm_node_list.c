@@ -3,6 +3,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 
 int main(void) {
   zcm_context_t *ctx = zcm_context_new();
@@ -19,10 +20,34 @@ int main(void) {
   zcm_node_t *node = zcm_node_new(ctx, "inproc://zcm-broker-list");
   if (!node) return 1;
 
-  zcm_node_register(node, "a", "tcp://127.0.0.1:7001");
-  zcm_node_register(node, "b", "tcp://127.0.0.1:7002");
+  zcm_node_register_ex(node, "a",
+                       "tcp://127.0.0.1:7001",
+                       "tcp://127.0.0.1:7101",
+                       "127.0.0.1", (int)getpid(),
+                       "PUB", 7001, -1);
+  zcm_node_register_ex(node, "b",
+                       "tcp://127.0.0.1:7002",
+                       "tcp://127.0.0.1:7102",
+                       "127.0.0.1", (int)getpid(),
+                       "PUB", 7002, -1);
   if (zcm_node_register_ex(node, "ifacepub", "tcp://eth0:7003",
-                           "", "publisher-host", 1234) != 0) {
+                           "tcp://publisher-host:7004",
+                           "publisher-host", 1234,
+                           "PUB", 7003, -1) != 0) {
+    return 1;
+  }
+  if (zcm_node_register_ex(node, "bad-role",
+                           "tcp://127.0.0.1:7010",
+                           "tcp://127.0.0.1:7110",
+                           "127.0.0.1", (int)getpid(),
+                           "UNKNOWN", -1, -1) == 0) {
+    return 1;
+  }
+  if (zcm_node_register_ex(node, "bad-pub-port",
+                           "tcp://127.0.0.1:7011",
+                           "tcp://127.0.0.1:7111",
+                           "127.0.0.1", (int)getpid(),
+                           "PUB", -1, -1) == 0) {
     return 1;
   }
 

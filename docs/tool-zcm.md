@@ -24,9 +24,8 @@ List registered processes:
 - If broker is not reachable, the command prints only:
   - `zcm: broker not reachable`
 - `zcm names` retries transient broker failures before reporting offline.
-- Nodes registered without control metadata (plain `REGISTER`) are shown as `EXTERNAL`
-  without probing `DATA_*` commands (prevents names timeout on non-`zcm_proc` nodes).
-- Nodes exposing control metadata (`REGISTER_EX` + `DATA_*` commands) can show full
+- Nodes are expected to register with `REGISTER_EX` metadata.
+- Nodes exposing control metadata and `DATA_*` commands can show full
   `ROLE`, `*_PORT`, and `*_BYTES` values.
 - Broker-side metric probing is local-host only; stale remote registrations do not
   block `LIST_EX` responses (remote nodes should report metrics via `METRICS`).
@@ -35,7 +34,7 @@ List registered processes:
 - `LIST`/`LIST_EX` are kept read-only and avoid stale remote prune side effects.
 - For `sub://host:port` registrations, CLI cross-references matching `tcp://host:port`
   entries to display subscriber target names in `ROLE` and a normalized `ENDPOINT`.
-- For legacy `tcp://host:port` registrations inferred as subscriber-side, CLI can also
+- For `tcp://host:port` rows inferred as subscriber-side, CLI can also
   resolve `ROLE` target annotation by endpoint matching against publisher entries.
 
 Kill (shutdown) a registered process:
@@ -49,11 +48,8 @@ Control-command behavior:
 
 Control endpoint resolution:
 - `zcm kill`/`zcm ping` first use broker `ctrl_endpoint` metadata.
-- When `ctrl_endpoint` is missing for a legacy TCP registration, the client applies
-  fallback `tcp://host:(data_port+1)`.
 - If control does not respond, the CLI retries on the registered data endpoint.
-- `zcm_proc` publishes control metadata by default (`REGISTER_EX`), so kill/ping
-  are directly routable without fallback in normal deployments.
+- `zcm_proc` publishes control metadata by default (`REGISTER_EX`).
 
 Discovery/re-registration:
 - `zcm names` uses broker registry state.
@@ -94,8 +90,7 @@ External nodes:
   - `DATA_ROLE`
   - `DATA_PORT_PUB` (and optional legacy `DATA_PORT`)
   - `DATA_PAYLOAD_BYTES_PUB`
-- If a bridge registers only with plain `REGISTER`, it is shown as `EXTERNAL`
-  and byte/port columns stay `-`.
+- If a bridge does not implement `DATA_*` replies, byte/port columns stay `-`.
 
 Broker resolution for `zcm` CLI and broker:
 - Optional explicit override:

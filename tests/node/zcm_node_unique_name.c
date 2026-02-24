@@ -30,7 +30,8 @@ int main(void) {
   if (zcm_node_register_ex(node, "basic",
                            "tcp://127.0.0.1:7301",
                            "tcp://127.0.0.1:7401",
-                           "127.0.0.1", owner_pid) != 0) {
+                           "127.0.0.1", owner_pid,
+                           "PUB", 7301, -1) != 0) {
     zcm_node_free(node);
     zcm_broker_stop(broker);
     zcm_context_free(ctx);
@@ -41,7 +42,8 @@ int main(void) {
   if (zcm_node_register_ex(node, "basic",
                            "tcp://127.0.0.1:7301",
                            "tcp://127.0.0.1:7401",
-                           "127.0.0.1", owner_pid) != 0) {
+                           "127.0.0.1", owner_pid,
+                           "PUB", 7301, -1) != 0) {
     zcm_node_free(node);
     zcm_broker_stop(broker);
     zcm_context_free(ctx);
@@ -52,7 +54,8 @@ int main(void) {
   int dup_rc = zcm_node_register_ex(node, "basic",
                                     "tcp://127.0.0.1:7302",
                                     "tcp://127.0.0.1:7402",
-                                    "127.0.0.1", other_pid);
+                                    "other-host.example", other_pid,
+                                    "PUB", 7302, -1);
   if (dup_rc != ZCM_NODE_REGISTER_EX_DUPLICATE) {
     fprintf(stderr, "expected duplicate rc=%d got %d\n",
             ZCM_NODE_REGISTER_EX_DUPLICATE, dup_rc);

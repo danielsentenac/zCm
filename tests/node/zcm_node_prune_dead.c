@@ -47,7 +47,8 @@ int main(void) {
   if (zcm_node_register_ex(node, "ghost",
                            "tcp://127.0.0.1:7399",
                            "tcp://127.0.0.1:7499",
-                           "127.0.0.1", dead_pid) != 0) {
+                           "127.0.0.1", dead_pid,
+                           "PUB", 7399, -1) != 0) {
     zcm_node_free(node);
     zcm_broker_stop(broker);
     zcm_context_free(ctx);

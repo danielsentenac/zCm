@@ -48,13 +48,16 @@ int main(void) {
   /*
    * Register a remote-host entry with a dead control endpoint.
    * LIST_EX must still reply within socket timeout and not block the broker.
+   * In simplified broker mode, entries are kept from in-memory registrations
+   * and not actively pruned during INFO/LIST calls.
    */
   if (zcm_node_register_ex(node,
                            "stale-remote",
                            "tcp://127.0.0.1:65100",
                            "tcp://127.0.0.1:65101",
                            "remote-host.example",
-                           12345) != 0) {
+                           12345,
+                           "NONE", -1, -1) != 0) {
     fprintf(stderr, "zcm_broker_list_ex_remote_stale: register_ex failed\n");
     goto cleanup;
   }
@@ -88,6 +91,7 @@ int main(void) {
     char status[16] = {0};
     int count = 0;
     int found_broker = 0;
+    int found_stale = 0;
     int n = 0;
 
     if (recv_text_frame(req, status, sizeof(status)) != 0) {
@@ -130,10 +134,15 @@ int main(void) {
         goto cleanup;
       }
       if (strcmp(name, "zcmbroker") == 0) found_broker = 1;
+      if (strcmp(name, "stale-remote") == 0) found_stale = 1;
     }
 
     if (!found_broker) {
       fprintf(stderr, "zcm_broker_list_ex_remote_stale: zcmbroker entry missing in LIST_EX\n");
+      goto cleanup;
+    }
+    if (!found_stale) {
+      fprintf(stderr, "zcm_broker_list_ex_remote_stale: stale-remote missing in LIST_EX\n");
       goto cleanup;
     }
   }
@@ -142,16 +151,16 @@ int main(void) {
     char info_ep[256] = {0};
     if (zcm_node_info(node, "stale-remote",
                       info_ep, sizeof(info_ep),
-                      NULL, 0, NULL, 0, NULL) == 0) {
-      fprintf(stderr, "zcm_broker_list_ex_remote_stale: stale-remote should have been pruned by INFO, got endpoint: %s\n", info_ep);
+                      NULL, 0, NULL, 0, NULL) != 0) {
+      fprintf(stderr, "zcm_broker_list_ex_remote_stale: stale-remote info lookup failed\n");
       goto cleanup;
     }
   }
 
   {
     char ep[256] = {0};
-    if (zcm_node_lookup(node, "stale-remote", ep, sizeof(ep)) == 0) {
-      fprintf(stderr, "zcm_broker_list_ex_remote_stale: stale-remote still present after INFO prune, endpoint: %s\n", ep);
+    if (zcm_node_lookup(node, "stale-remote", ep, sizeof(ep)) != 0) {
+      fprintf(stderr, "zcm_broker_list_ex_remote_stale: stale-remote lookup failed\n");
       goto cleanup;
     }
   }

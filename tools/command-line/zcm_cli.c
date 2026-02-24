@@ -114,6 +114,16 @@ static int parse_int_reply(const char *text, int *out_value) {
   return 0;
 }
 
+static int names_query_timeout_ms(void) {
+  const char *env = getenv("ZCM_NAMES_QUERY_TIMEOUT_MS");
+  if (!env || !*env) return 60;
+  char *end = NULL;
+  long v = strtol(env, &end, 10);
+  if (!end || *end != '\0') return 60;
+  if (v < 10 || v > 5000) return 60;
+  return (int)v;
+}
+
 static int endpoint_is_queryable(const char *endpoint) {
   if (!endpoint || !*endpoint) return 0;
   if (strncmp(endpoint, "tcp://", 6) == 0) return 1;
@@ -195,7 +205,7 @@ static int query_proc_command_once(zcm_context_t *ctx, const char *endpoint,
   int rc = -1;
   zcm_socket_t *req = zcm_socket_new(ctx, ZCM_SOCK_REQ);
   if (!req) return -1;
-  zcm_socket_set_timeouts(req, 800);
+  zcm_socket_set_timeouts(req, names_query_timeout_ms());
   if (zcm_socket_connect(req, endpoint) != 0) goto out;
 
   zcm_msg_t *q = zcm_msg_new();
@@ -262,7 +272,46 @@ static int query_proc_command(zcm_context_t *ctx, const char *endpoint,
   if (query_proc_command_once(ctx, endpoint, cmd, 1, out_text, out_text_size, out_code) == 0) {
     return 0;
   }
-  return query_proc_command_once(ctx, endpoint, cmd, 0, out_text, out_text_size, out_code);
+  if (query_proc_command_once(ctx, endpoint, cmd, 0, out_text, out_text_size, out_code) == 0) {
+    return 0;
+  }
+
+  /* Compatibility fallback for nodes exposing plain-text REP control APIs
+   * (for example some bridge-based nodes) instead of ZCM typed envelopes. */
+  if (!ctx || !endpoint || !*endpoint || !cmd || !*cmd || !out_text || out_text_size == 0) {
+    return -1;
+  }
+  if (!endpoint_is_queryable(endpoint)) return -1;
+
+  out_text[0] = '\0';
+  if (out_code) *out_code = 0;
+
+  void *req = zmq_socket(zcm_context_zmq(ctx), ZMQ_REQ);
+  if (!req) return -1;
+
+  int timeout_ms = names_query_timeout_ms();
+  int linger = 0;
+  int immediate = 1;
+  zmq_setsockopt(req, ZMQ_RCVTIMEO, &timeout_ms, sizeof(timeout_ms));
+  zmq_setsockopt(req, ZMQ_SNDTIMEO, &timeout_ms, sizeof(timeout_ms));
+  zmq_setsockopt(req, ZMQ_LINGER, &linger, sizeof(linger));
+  zmq_setsockopt(req, ZMQ_IMMEDIATE, &immediate, sizeof(immediate));
+
+  if (zmq_connect(req, endpoint) != 0) {
+    zmq_close(req);
+    return -1;
+  }
+  if (zmq_send(req, cmd, strlen(cmd), 0) < 0) {
+    zmq_close(req);
+    return -1;
+  }
+
+  int n = zmq_recv(req, out_text, (int)out_text_size - 1, 0);
+  zmq_close(req);
+  if (n <= 0) return -1;
+  out_text[n] = '\0';
+  if (out_code) *out_code = 200;
+  return 0;
 }
 
 static int query_proc_command_with_ctrl_fallback(zcm_context_t *ctx, zcm_node_t *node,
@@ -405,9 +454,8 @@ static void probe_node_role(zcm_context_t *ctx, zcm_node_t *node,
   char probe_endpoint[512] = {0};
   snprintf(probe_endpoint, sizeof(probe_endpoint), "%s", endpoint);
 
-  /* Fast-path for non-zcm_proc registrants (REGISTER without control metadata).
-   * Those nodes do not expose DATA_* commands and probing them can make
-   * `zcm names` hit the global timeout. */
+  /* Prefer broker metadata first. Some nodes only report metrics and do not
+   * expose DATA_* control commands. */
   char info_ep[512] = {0};
   char info_ctrl_ep[512] = {0};
   char info_host[256] = {0};
@@ -426,10 +474,6 @@ static void probe_node_role(zcm_context_t *ctx, zcm_node_t *node,
     }
     if (info_ctrl_ep[0]) {
       snprintf(probe_endpoint, sizeof(probe_endpoint), "%s", info_ctrl_ep);
-    } else if (info_pid <= 0 && info_host[0] == '\0' &&
-               !endpoint_is_sub_scheme(info_ep[0] ? info_ep : endpoint)) {
-      snprintf(out_role, out_role_size, "EXTERNAL");
-      return;
     }
   }
 
@@ -561,9 +605,64 @@ static void probe_node_role(zcm_context_t *ctx, zcm_node_t *node,
   }
 }
 
+static void probe_node_bytes_by_role(zcm_context_t *ctx, const char *endpoint,
+                                     const char *role,
+                                     int *out_pub_bytes, int *out_sub_bytes,
+                                     int *out_push_bytes, int *out_pull_bytes) {
+  if (!out_pub_bytes || !out_sub_bytes || !out_push_bytes || !out_pull_bytes) return;
+  *out_pub_bytes = -1;
+  *out_sub_bytes = -1;
+  *out_push_bytes = -1;
+  *out_pull_bytes = -1;
+
+  if (!ctx || !endpoint || !*endpoint || !role || !*role) return;
+  if (strcmp(role, "UNKNOWN") == 0 || strcmp(role, "NONE") == 0 || strcmp(role, "BROKER") == 0) return;
+
+  char text[128] = {0};
+  int code = 0;
+  int bytes = -1;
+
+  if (role_has_pub(role) &&
+      query_proc_command(ctx, endpoint,
+                         "DATA_PAYLOAD_BYTES_PUB",
+                         text, sizeof(text), &code) == 0 &&
+      code == 200 &&
+      parse_int_reply(text, &bytes) == 0) {
+    *out_pub_bytes = bytes;
+  }
+
+  if (role_has_sub(role) &&
+      query_proc_command(ctx, endpoint,
+                         "DATA_PAYLOAD_BYTES_SUB",
+                         text, sizeof(text), &code) == 0 &&
+      code == 200 &&
+      parse_int_reply(text, &bytes) == 0) {
+    *out_sub_bytes = bytes;
+  }
+
+  if (role_has_push(role) &&
+      query_proc_command(ctx, endpoint,
+                         "DATA_PAYLOAD_BYTES_PUSH",
+                         text, sizeof(text), &code) == 0 &&
+      code == 200 &&
+      parse_int_reply(text, &bytes) == 0) {
+    *out_push_bytes = bytes;
+  }
+
+  if (role_has_pull(role) &&
+      query_proc_command(ctx, endpoint,
+                         "DATA_PAYLOAD_BYTES_PULL",
+                         text, sizeof(text), &code) == 0 &&
+      code == 200 &&
+      parse_int_reply(text, &bytes) == 0) {
+    *out_pull_bytes = bytes;
+  }
+}
+
 typedef struct names_row_info {
   char host[256];
-  char role[64];
+  char role[512];
+  char ctrl_endpoint[512];
   char endpoint_display[512];
   char role_display[512];
   char sub_target_bytes_csv[1024];
@@ -841,9 +940,8 @@ static int row_is_subscriber_candidate(const zcm_node_entry_t *entry, const name
   if (endpoint_is_sub_scheme(entry->endpoint)) return 1;
   if (role_has_sub(row->role)) return 1;
 
-  /* Legacy plain REGISTER over tcp:// can still represent a SUB node.
-   * If role inference has no positive sender signal, allow endpoint-match
-   * decoration to classify it as SUB. */
+  /* If role inference has no positive sender signal, allow endpoint-match
+   * decoration to classify an unknown row as SUB. */
   if ((strcmp(row->role, "EXTERNAL") == 0 || strcmp(row->role, "UNKNOWN") == 0) &&
       !role_has_pub(row->role) && !role_has_push(row->role) && !role_has_pull(row->role) &&
       row->pub_port <= 0 && row->push_port <= 0 &&
@@ -854,9 +952,9 @@ static int row_is_subscriber_candidate(const zcm_node_entry_t *entry, const name
   return 0;
 }
 
-static void names_rows_apply_subscriber_resolution(zcm_node_entry_t *entries,
-                                                   names_row_info_t *rows,
-                                                   size_t count) {
+static void names_rows_init_display_from_broker(zcm_node_entry_t *entries,
+                                                 names_row_info_t *rows,
+                                                 size_t count) {
   if (!entries || !rows) return;
 
   for (size_t i = 0; i < count; i++) {
@@ -872,16 +970,25 @@ static void names_rows_apply_subscriber_resolution(zcm_node_entry_t *entries,
     if (rows[i].role[0]) snprintf(rows[i].role_display, sizeof(rows[i].role_display), "%s", rows[i].role);
     else snprintf(rows[i].role_display, sizeof(rows[i].role_display), "UNKNOWN");
   }
+}
+
+static void names_rows_apply_subscriber_resolution(zcm_node_entry_t *entries,
+                                                   names_row_info_t *rows,
+                                                   size_t count) {
+  if (!entries || !rows) return;
+
+  names_rows_init_display_from_broker(entries, rows, count);
 
   for (size_t i = 0; i < count; i++) {
     if (!row_is_subscriber_candidate(&entries[i], &rows[i])) continue;
 
+    const char *sub_match_source =
+      (rows[i].ctrl_endpoint[0] ? rows[i].ctrl_endpoint : entries[i].endpoint);
     char resolved_endpoint[512] = {0};
-    if (endpoint_normalize_for_matching(entries[i].endpoint,
+    if (endpoint_normalize_for_matching(sub_match_source,
                                         resolved_endpoint, sizeof(resolved_endpoint)) != 0) {
       continue;
     }
-    snprintf(rows[i].endpoint_display, sizeof(rows[i].endpoint_display), "%s", resolved_endpoint);
 
     int resolved_port = -1;
     (void)endpoint_parse_port(resolved_endpoint, &resolved_port);
@@ -1023,15 +1130,14 @@ static void names_rows_apply_subscriber_targets_query(zcm_context_t *ctx,
 
   for (size_t i = 0; i < count; i++) {
     if (!row_is_subscriber_candidate(&entries[i], &rows[i])) continue;
-    if (strstr(rows[i].role_display, "SUB:") != NULL) continue;
     if (!entries[i].endpoint || !entries[i].endpoint[0]) continue;
     if (!endpoint_is_queryable(entries[i].endpoint)) continue;
 
     char reply_text[512] = {0};
     int code = 0;
-    if (query_proc_command_once(ctx, entries[i].endpoint,
-                                "DATA_SUB_TARGETS", 1,
-                                reply_text, sizeof(reply_text), &code) != 0 ||
+    if (query_proc_command(ctx, entries[i].endpoint,
+                           "DATA_SUB_TARGETS",
+                           reply_text, sizeof(reply_text), &code) != 0 ||
         code != 200) {
       continue;
     }
@@ -1102,6 +1208,10 @@ static void names_rows_apply_subscriber_info_overrides(zcm_node_t *node,
       continue;
     }
     (void)info_pid;
+
+    if (info_ep[0]) {
+      snprintf(rows[i].ctrl_endpoint, sizeof(rows[i].ctrl_endpoint), "%s", info_ep);
+    }
 
     if (info_host[0]) {
       snprintf(rows[i].host, sizeof(rows[i].host), "%s", info_host);
@@ -1520,14 +1630,14 @@ static int recv_text_frame(void *sock, char *out, size_t out_size) {
 static int do_names_broker_ex(const char *endpoint) {
   int rc = 1;
   zcm_context_t *ctx = zcm_context_new();
-  zcm_node_t *info_node = NULL;
+  zcm_node_t *node = NULL;
   void *req = NULL;
   zcm_node_entry_t *entries = NULL;
   names_row_info_t *rows = NULL;
   size_t count = 0;
 
   if (!ctx || !endpoint || !*endpoint) goto out;
-  info_node = zcm_node_new(ctx, endpoint);
+  node = zcm_node_new(ctx, endpoint);
   req = zmq_socket(zcm_context_zmq(ctx), ZMQ_REQ);
   if (!req) goto out;
 
@@ -1561,7 +1671,7 @@ static int do_names_broker_ex(const char *endpoint) {
     char name[256] = {0};
     char ep[512] = {0};
     char host[256] = {0};
-    char role[64] = {0};
+    char role[512] = {0};
     char pub_port[32] = {0};
     char push_port[32] = {0};
     char pub_bytes[32] = {0};
@@ -1592,6 +1702,7 @@ static int do_names_broker_ex(const char *endpoint) {
 
     if (role[0]) snprintf(rows[i].role, sizeof(rows[i].role), "%s", role);
     else snprintf(rows[i].role, sizeof(rows[i].role), "UNKNOWN");
+    rows[i].ctrl_endpoint[0] = '\0';
 
     rows[i].pub_port = -1;
     rows[i].push_port = -1;
@@ -1607,11 +1718,33 @@ static int do_names_broker_ex(const char *endpoint) {
     (void)parse_int_reply(pull_bytes, &rows[i].pull_bytes);
   }
 
-  names_rows_apply_subscriber_resolution(entries, rows, count);
-  names_rows_apply_subscriber_info_overrides(info_node, entries, rows, count);
-  names_rows_apply_subscriber_targets_query(ctx, entries, rows, count);
-  names_rows_apply_subscriber_target_bytes_query(ctx, info_node, entries, rows, count);
-  names_rows_apply_subscriber_endpoint_corrections(entries, rows, count);
+  names_rows_init_display_from_broker(entries, rows, count);
+  for (size_t i = 0; i < count; i++) {
+    if (!entries[i].name || !entries[i].endpoint) continue;
+    {
+      const char *query_ep = entries[i].endpoint;
+      int pub_bytes = -1;
+      int sub_bytes = -1;
+      int push_bytes = -1;
+      int pull_bytes = -1;
+      probe_node_bytes_by_role(ctx, query_ep, rows[i].role,
+                               &pub_bytes, &sub_bytes,
+                               &push_bytes, &pull_bytes);
+      if (pub_bytes >= 0) rows[i].pub_bytes = pub_bytes;
+      if (sub_bytes >= 0) rows[i].sub_bytes = sub_bytes;
+      if (push_bytes >= 0) rows[i].push_bytes = push_bytes;
+      if (pull_bytes >= 0) rows[i].pull_bytes = pull_bytes;
+    }
+  }
+  if (node) {
+    names_rows_apply_subscriber_info_overrides(node, entries, rows, count);
+    names_rows_apply_subscriber_resolution(entries, rows, count);
+    names_rows_apply_subscriber_targets_query(ctx, entries, rows, count);
+    names_rows_apply_subscriber_target_bytes_query(ctx, node, entries, rows, count);
+    names_rows_apply_subscriber_endpoint_corrections(entries, rows, count);
+  } else {
+    names_rows_apply_subscriber_resolution(entries, rows, count);
+  }
   names_rows_apply_broker_endpoint_dns(entries, rows, count);
   names_print_table(entries, rows, count);
 
@@ -1621,100 +1754,22 @@ out:
   if (entries) zcm_node_list_free(entries, count);
   free(rows);
   if (req) zmq_close(req);
-  if (info_node) zcm_node_free(info_node);
+  if (node) zcm_node_free(node);
   if (ctx) zcm_context_free(ctx);
   return rc;
 }
 
 static int do_names(const char *endpoint) {
-  int ex_rc = do_names_broker_ex(endpoint);
-  if (ex_rc == 0) return 0;
-
-  int rc = 1;
-  zcm_context_t *ctx = zcm_context_new();
-  if (!ctx) return 1;
-  zcm_node_t *node = zcm_node_new(ctx, endpoint);
-  if (!node) {
-    zcm_context_free(ctx);
-    return 1;
-  }
-
-  zcm_node_entry_t *entries = NULL;
-  size_t count = 0;
-  if (zcm_node_list(node, &entries, &count) == 0) {
-    names_row_info_t *rows = NULL;
-    if (count > 0) {
-      rows = (names_row_info_t *)calloc(count, sizeof(*rows));
-      if (!rows) {
-        zcm_node_list_free(entries, count);
-        zcm_node_free(node);
-        zcm_context_free(ctx);
-        return 1;
-      }
-    }
-
-    for (size_t i = 0; i < count; i++) {
-      probe_node_role(ctx, node, entries[i].name, entries[i].endpoint,
-                      rows[i].role, sizeof(rows[i].role),
-                      &rows[i].pub_port, &rows[i].push_port,
-                      &rows[i].pub_bytes, &rows[i].sub_bytes,
-                      &rows[i].push_bytes, &rows[i].pull_bytes,
-                      rows[i].host, sizeof(rows[i].host));
-    }
-
-    names_rows_apply_subscriber_resolution(entries, rows, count);
-    names_rows_apply_subscriber_info_overrides(node, entries, rows, count);
-    names_rows_apply_subscriber_targets_query(ctx, entries, rows, count);
-    names_rows_apply_subscriber_target_bytes_query(ctx, node, entries, rows, count);
-    names_rows_apply_subscriber_endpoint_corrections(entries, rows, count);
-    names_rows_apply_broker_endpoint_dns(entries, rows, count);
-    names_print_table(entries, rows, count);
-
-    if (rows) {
-      free(rows);
-      rows = NULL;
-    }
-    zcm_node_list_free(entries, count);
-    rc = 0;
-  }
-
-  zcm_node_free(node);
-  zcm_context_free(ctx);
-  return rc;
+  return do_names_broker_ex(endpoint);
 }
 
 static int do_names_with_timeout(const char *endpoint, int timeout_ms, int report_error) {
-  pid_t pid = fork();
-  if (pid == 0) {
-    int rc = do_names(endpoint);
-    fflush(NULL);
-    _exit(rc);
+  (void)timeout_ms;
+  int rc = do_names(endpoint);
+  if (rc != 0 && report_error) {
+    fprintf(stderr, "zcm: broker not reachable\n");
   }
-  if (pid < 0) return 1;
-
-  int status = 0;
-  int waited = 0;
-  while (waited < timeout_ms) {
-    pid_t r = waitpid(pid, &status, WNOHANG);
-    if (r == pid) {
-      if (WIFEXITED(status)) {
-        int rc = WEXITSTATUS(status);
-        if (rc != 0 && report_error) {
-          fprintf(stderr, "zcm: broker not reachable\n");
-        }
-        return rc;
-      }
-      if (report_error) fprintf(stderr, "zcm: broker not reachable\n");
-      return 1;
-    }
-    usleep(100 * 1000);
-    waited += 100;
-  }
-
-  kill(pid, SIGKILL);
-  waitpid(pid, &status, 0);
-  if (report_error) fprintf(stderr, "zcm: broker not reachable\n");
-  return 1;
+  return rc;
 }
 
 static int do_names_with_retry(const char *endpoint, int timeout_ms, int attempts) {

@@ -41,6 +41,9 @@ struct zcm_proc {
   char *ctrl_reg_endpoint;
   char *host;
   int pid;
+  char reg_role[32];
+  int reg_pub_port;
+  int reg_push_port;
   int announce_interval_ms;
   int announce_backoff_max_ms;
   int announce_ok;
@@ -122,7 +125,10 @@ static int proc_register_ex(struct zcm_proc *proc) {
   return zcm_node_register_ex(proc->node, proc->name,
                               proc->reg_endpoint,
                               proc->ctrl_reg_endpoint,
-                              proc->host, proc->pid);
+                              proc->host, proc->pid,
+                              proc->reg_role,
+                              proc->reg_pub_port,
+                              proc->reg_push_port);
 }
 
 static void *announce_thread_main(void *arg) {
@@ -563,11 +569,28 @@ int zcm_proc_init(const char *name, zcm_socket_type_t data_type, int bind_data,
   }
   char data_reg_ep[256] = {0};
   char ctrl_reg_ep[256] = {0};
+  const char *reg_role = "NONE";
+  int reg_pub_port = -1;
+  int reg_push_port = -1;
   if (data_port > 0) snprintf(data_reg_ep, sizeof(data_reg_ep), "tcp://%s:%d", use_host, data_port);
   snprintf(ctrl_reg_ep, sizeof(ctrl_reg_ep), "tcp://%s:%d", use_host, ctrl_port);
+  if (cfg_bind_data && data_port > 0) {
+    if (cfg_data_type == ZCM_SOCK_PUB) {
+      reg_role = "PUB";
+      reg_pub_port = data_port;
+    } else if (cfg_data_type == ZCM_SOCK_SUB) {
+      reg_role = "SUB";
+    } else if (cfg_data_type == ZCM_SOCK_PUSH) {
+      reg_role = "PUSH";
+      reg_push_port = data_port;
+    } else if (cfg_data_type == ZCM_SOCK_PULL) {
+      reg_role = "PULL";
+    }
+  }
 
   const char *reg_ep = (data_port > 0) ? data_reg_ep : ctrl_reg_ep;
-  int reg_rc = zcm_node_register_ex(node, name, reg_ep, ctrl_reg_ep, use_host, getpid());
+  int reg_rc = zcm_node_register_ex(node, name, reg_ep, ctrl_reg_ep, use_host, getpid(),
+                                    reg_role, reg_pub_port, reg_push_port);
   if (reg_rc != 0) {
     if (reg_rc == ZCM_NODE_REGISTER_EX_DUPLICATE) {
       fprintf(stderr, "zcm_proc: register failed (duplicate name: %s)\n", name);
@@ -588,6 +611,9 @@ int zcm_proc_init(const char *name, zcm_socket_type_t data_type, int bind_data,
   proc->ctrl_reg_endpoint = strdup(ctrl_reg_ep);
   proc->host = strdup(use_host);
   proc->pid = getpid();
+  snprintf(proc->reg_role, sizeof(proc->reg_role), "%s", reg_role);
+  proc->reg_pub_port = reg_pub_port;
+  proc->reg_push_port = reg_push_port;
   proc->announce_interval_ms = announce_interval_ms;
   proc->announce_backoff_max_ms = announce_backoff_max_ms;
   proc->announce_ok = 1;

@@ -276,8 +276,11 @@ int main(void) {
     fprintf(stderr, "zcm_cli_ping_fallback: node init failed\n");
     goto done;
   }
-  if (zcm_node_register(node, "legacy", data_ep) != 0) {
-    fprintf(stderr, "zcm_cli_ping_fallback: legacy register failed\n");
+  if (zcm_node_register_ex(node, "legacy",
+                           data_ep, data_ep,
+                           "127.0.0.1", (int)getpid(),
+                           "UNKNOWN", -1, -1) != 0) {
+    fprintf(stderr, "zcm_cli_ping_fallback: register_ex failed\n");
     goto done;
   }
 
