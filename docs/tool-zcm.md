@@ -27,6 +27,11 @@ List registered processes:
 - Nodes are expected to register with `REGISTER_EX` metadata.
 - Nodes exposing control metadata and `DATA_*` commands can show full
   `ROLE`, `*_PORT`, and `*_BYTES` values.
+- `zcm names` queries each node with a single typed control command:
+  - `DATA_METRICS`
+  - expected reply format:
+    - `ROLE=<...>;PUB_PORT=<...>;PUSH_PORT=<...>;PUB_BYTES=<...>;SUB_BYTES=<...>;PUSH_BYTES=<...>;PULL_BYTES=<...>;SUB_TARGETS=<...>;SUB_TARGET_BYTES=<...>`
+  - for unsupported fields, nodes should return `-` (not silence/timeouts).
 - Broker-side metric probing is local-host only; stale remote registrations do not
   block `LIST_EX` responses (remote nodes should report metrics via `METRICS`).
 - For remote entries with control metadata (`REGISTER_EX` + PID), broker performs a
@@ -87,9 +92,7 @@ zcmbroker  tcp://90.147.137.35:5555  olserver135.virgo.infn.it  BROKER -        
 External nodes:
 - To appear as `PUB` with `PUB_PORT`/`PUB_BYTES`, register with `REGISTER_EX`
   and expose a control endpoint that replies to:
-  - `DATA_ROLE`
-  - `DATA_PORT_PUB` (and optional legacy `DATA_PORT`)
-  - `DATA_PAYLOAD_BYTES_PUB`
+  - `DATA_METRICS`
 - If a bridge does not implement `DATA_*` replies, byte/port columns stay `-`.
 
 Broker resolution for `zcm` CLI and broker:
