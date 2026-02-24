@@ -174,6 +174,8 @@ int zcm_node_report_metrics(zcm_node_t *node, const char *name, const char *role
  *
  * Supported commands:
  * - `PING` -> reply `REPLY(PONG,200)`
+ * - `DATA_METRICS` -> reply
+ *   `REPLY(ROLE=NONE;PUB_PORT=-1;PUSH_PORT=-1;PUB_BYTES=-1;SUB_BYTES=-1;PUSH_BYTES=-1;PULL_BYTES=-1;SUB_TARGETS=-;SUB_TARGET_BYTES=-,200)`
  * - `KILL` -> reply `REPLY(OK,200)` and request process exit
  * - `SHUTDOWN` -> reply `REPLY(OK,200)` and request process exit
  *

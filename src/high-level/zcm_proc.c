@@ -395,6 +395,8 @@ static int load_domain_info(char **broker_ep, char **host_out, int *first_port, 
 
 static void *ctrl_thread_main(void *arg) {
   struct zcm_proc *proc = (struct zcm_proc *)arg;
+  static const char *k_default_data_metrics =
+    "ROLE=NONE;PUB_PORT=-1;PUSH_PORT=-1;PUB_BYTES=-1;SUB_BYTES=-1;PUSH_BYTES=-1;PULL_BYTES=-1;SUB_TARGETS=-;SUB_TARGET_BYTES=-";
   for (;;) {
     char ctrl_buf[512] = {0};
     size_t ctrl_len = 0;
@@ -433,6 +435,10 @@ static void *ctrl_thread_main(void *arg) {
         fflush(stdout);
         const char *pong = "PONG";
         zcm_socket_send_bytes(proc->ctrl, pong, strlen(pong));
+      } else if (strcmp(ctrl_buf, "DATA_METRICS") == 0) {
+        zcm_socket_send_bytes(proc->ctrl,
+                              k_default_data_metrics,
+                              strlen(k_default_data_metrics));
       } else {
         const char *err = "ERR";
         zcm_socket_send_bytes(proc->ctrl, err, strlen(err));

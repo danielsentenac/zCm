@@ -10,7 +10,9 @@ Unified process executable:
 ## Behavior
 - Every `zcm_proc` is an infinite daemon.
 - It always answers requests over direct ZeroMQ `REQ/REP` semantics.
-- Default command behavior is `PING -> PONG`.
+- Default command behavior includes:
+  - `PING -> PONG`
+  - `DATA_METRICS -> ROLE=NONE;PUB_PORT=-1;PUSH_PORT=-1;PUB_BYTES=-1;SUB_BYTES=-1;PUSH_BYTES=-1;PULL_BYTES=-1;SUB_TARGETS=-;SUB_TARGET_BYTES=-`
 - It periodically re-registers in broker so names recover after broker restart.
   - tune interval with `ZCM_PROC_REANNOUNCE_MS` (default `1000`)
 - Optional repeated `dataSocket` entries configure bytes `PUB/SUB/PUSH/PULL` roles.
@@ -38,7 +40,10 @@ Optional:
   (example: `topics="prefix1,prefix2"`). If omitted, `SUB` subscribes to all.
 
 Handlers:
-- builtin command behavior is fixed: `PING -> PONG` (default reply `OK`)
+- builtin command behavior is fixed:
+  - `PING -> PONG`
+  - `DATA_METRICS -> ROLE=NONE;PUB_PORT=-1;PUSH_PORT=-1;PUB_BYTES=-1;SUB_BYTES=-1;PUSH_BYTES=-1;PULL_BYTES=-1;SUB_TARGETS=-;SUB_TARGET_BYTES=-`
+  - default reply `OK`
 - `<type name="..."> <arg kind="..."/> ... </type>`
 - `arg kind`: `text`, `double`, `float`, `int`
 - TYPE payload order is strict.
@@ -70,7 +75,10 @@ Process config at init (required):
   - each `SUB` target publisher port is discovered via `DATA_PORT_PUB` (fallback: `DATA_PORT`)
   - each `PULL` target pusher port is discovered via `DATA_PORT_PUSH`
 - Optional `<handlers>` adds request reply rules:
-  - builtin command behavior is fixed: `PING -> PONG` (default reply `OK`)
+  - builtin command behavior is fixed:
+    - `PING -> PONG`
+    - `DATA_METRICS -> ROLE=NONE;PUB_PORT=-1;PUSH_PORT=-1;PUB_BYTES=-1;SUB_BYTES=-1;PUSH_BYTES=-1;PULL_BYTES=-1;SUB_TARGETS=-;SUB_TARGET_BYTES=-`
+    - default reply `OK`
   - repeated `<type name=...><arg kind=.../>...</type>` with ordered payload args
   - TYPE replies are built in handler code and sent as typed messages with name `<REQ_TYPE>_RPL`
   - malformed TYPE requests are rejected with `ERROR` and expected TYPE format

@@ -19,6 +19,9 @@
 static const char *k_builtin_ping_request = "PING";
 static const char *k_builtin_ping_reply = "PONG";
 static const char *k_builtin_default_reply = "OK";
+static const char *k_builtin_data_metrics_request = "DATA_METRICS";
+static const char *k_builtin_data_metrics_reply =
+  "ROLE=NONE;PUB_PORT=-1;PUSH_PORT=-1;PUB_BYTES=-1;SUB_BYTES=-1;PUSH_BYTES=-1;PULL_BYTES=-1;SUB_TARGETS=-;SUB_TARGET_BYTES=-";
 
 static pthread_mutex_t g_payload_bytes_mu = PTHREAD_MUTEX_INITIALIZER;
 static int g_payload_bytes_pub = -1;
@@ -745,6 +748,9 @@ const char *zcm_proc_runtime_builtin_default_reply(void) {
 const char *zcm_proc_runtime_builtin_reply_for_command(const char *cmd, uint32_t cmd_len) {
   if (text_equals_nocase(cmd, cmd_len, k_builtin_ping_request)) {
     return k_builtin_ping_reply;
+  }
+  if (text_equals_nocase(cmd, cmd_len, k_builtin_data_metrics_request)) {
+    return k_builtin_data_metrics_reply;
   }
   return k_builtin_default_reply;
 }

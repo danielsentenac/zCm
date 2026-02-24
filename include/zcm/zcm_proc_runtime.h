@@ -208,7 +208,11 @@ const char *zcm_proc_runtime_builtin_ping_reply(void);
 const char *zcm_proc_runtime_builtin_default_reply(void);
 
 /**
- * @brief Resolve builtin text command reply (`PING` => `PONG`, else `OK`).
+ * @brief Resolve builtin text command reply
+ * (`PING` => `PONG`,
+ *  `DATA_METRICS` =>
+ *  `ROLE=NONE;PUB_PORT=-1;PUSH_PORT=-1;PUB_BYTES=-1;SUB_BYTES=-1;PUSH_BYTES=-1;PULL_BYTES=-1;SUB_TARGETS=-;SUB_TARGET_BYTES=-`,
+ *  else `OK`).
  *
  * @param cmd Command text bytes.
  * @param cmd_len Command length in bytes.

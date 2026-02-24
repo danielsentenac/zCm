@@ -359,6 +359,9 @@ static int text_equals_nocase(const char *text, uint32_t len, const char *lit) {
   return strncasecmp(text, lit, n) == 0;
 }
 
+static const char *k_default_data_metrics =
+  "ROLE=NONE;PUB_PORT=-1;PUSH_PORT=-1;PUB_BYTES=-1;SUB_BYTES=-1;PUSH_BYTES=-1;PULL_BYTES=-1;SUB_TARGETS=-;SUB_TARGET_BYTES=-";
+
 int zcm_node_handle_control_msg(zcm_msg_t *req, zcm_msg_t *reply, int *out_should_exit) {
   if (!req || !reply || !out_should_exit) return -1;
   *out_should_exit = 0;
@@ -395,6 +398,12 @@ int zcm_node_handle_control_msg(zcm_msg_t *req, zcm_msg_t *reply, int *out_shoul
   if (text_equals_nocase(cmd, cmd_len, "PING")) {
     zcm_msg_set_type(reply, "REPLY");
     zcm_msg_put_text(reply, "PONG");
+    zcm_msg_put_int(reply, 200);
+    return 1;
+  }
+  if (text_equals_nocase(cmd, cmd_len, "DATA_METRICS")) {
+    zcm_msg_set_type(reply, "REPLY");
+    zcm_msg_put_text(reply, k_default_data_metrics);
     zcm_msg_put_int(reply, 200);
     return 1;
   }
