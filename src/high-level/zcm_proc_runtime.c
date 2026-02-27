@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/time.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -28,6 +29,38 @@ static int g_payload_bytes_pub = -1;
 static int g_payload_bytes_sub = -1;
 static int g_payload_bytes_push = -1;
 static int g_payload_bytes_pull = -1;
+static long long g_payload_last_rx_sub_ms = 0;
+static long long g_payload_last_rx_pull_ms = 0;
+
+#ifndef ZCM_PROC_RX_STALE_MS_DEFAULT
+#define ZCM_PROC_RX_STALE_MS_DEFAULT 5000
+#endif
+
+static long long payload_now_ms(void) {
+  struct timeval tv;
+  gettimeofday(&tv, NULL);
+  return (long long)tv.tv_sec * 1000LL + (long long)(tv.tv_usec / 1000);
+}
+
+static int payload_rx_stale_ms(void) {
+  static int cached = -2;
+  if (cached != -2) return cached;
+
+  const char *env = getenv("ZCM_PROC_RX_STALE_MS");
+  if (!env || !*env) {
+    cached = ZCM_PROC_RX_STALE_MS_DEFAULT;
+    return cached;
+  }
+
+  char *end = NULL;
+  long v = strtol(env, &end, 10);
+  if (!end || *end != '\0' || v < 0 || v > 600000) {
+    cached = ZCM_PROC_RX_STALE_MS_DEFAULT;
+    return cached;
+  }
+  cached = (int)v;
+  return cached;
+}
 
 static int payload_metric_get(int *slot) {
   int v = -1;
@@ -45,6 +78,36 @@ static void payload_metric_set(int *slot, int value) {
   pthread_mutex_unlock(&g_payload_bytes_mu);
 }
 
+static void payload_metric_set_with_rx_time(int *slot,
+                                            long long *last_rx_ms_slot,
+                                            int value) {
+  if (!slot) return;
+  pthread_mutex_lock(&g_payload_bytes_mu);
+  *slot = value;
+  if (last_rx_ms_slot) *last_rx_ms_slot = payload_now_ms();
+  pthread_mutex_unlock(&g_payload_bytes_mu);
+}
+
+static int payload_metric_get_with_stale(int *slot,
+                                         long long *last_rx_ms_slot) {
+  int v = -1;
+  long long last_rx_ms = 0;
+  int stale_ms;
+  if (!slot) return -1;
+
+  pthread_mutex_lock(&g_payload_bytes_mu);
+  v = *slot;
+  if (last_rx_ms_slot) last_rx_ms = *last_rx_ms_slot;
+  pthread_mutex_unlock(&g_payload_bytes_mu);
+
+  stale_ms = payload_rx_stale_ms();
+  if (stale_ms <= 0) return v;
+  if (v <= 0) return v;
+  if (last_rx_ms <= 0) return 0;
+  if ((payload_now_ms() - last_rx_ms) > (long long)stale_ms) return 0;
+  return v;
+}
+
 static void payload_metric_set_if_negative(int *slot, int value) {
   if (!slot) return;
   pthread_mutex_lock(&g_payload_bytes_mu);
@@ -58,6 +121,8 @@ static void payload_metrics_reset(void) {
   g_payload_bytes_sub = -1;
   g_payload_bytes_push = -1;
   g_payload_bytes_pull = -1;
+  g_payload_last_rx_sub_ms = 0;
+  g_payload_last_rx_pull_ms = 0;
   pthread_mutex_unlock(&g_payload_bytes_mu);
 }
 
@@ -819,10 +884,12 @@ int zcm_proc_runtime_payload_bytes(const zcm_proc_runtime_cfg_t *cfg,
       *out_bytes = (int)strlen(first->payload);
       return 0;
     case ZCM_PROC_DATA_SOCKET_SUB:
-      *out_bytes = payload_metric_get(&g_payload_bytes_sub);
+      *out_bytes = payload_metric_get_with_stale(&g_payload_bytes_sub,
+                                                 &g_payload_last_rx_sub_ms);
       return 0;
     case ZCM_PROC_DATA_SOCKET_PULL:
-      *out_bytes = payload_metric_get(&g_payload_bytes_pull);
+      *out_bytes = payload_metric_get_with_stale(&g_payload_bytes_pull,
+                                                 &g_payload_last_rx_pull_ms);
       return 0;
     default:
       return -1;
@@ -1098,9 +1165,13 @@ static void *rx_worker_main(void *arg) {
     size_t n = 0;
     if (zcm_socket_recv_bytes(rx, buf, sizeof(buf) - 1, &n) == 0) {
       if (ctx->sock.kind == ZCM_PROC_DATA_SOCKET_SUB) {
-        payload_metric_set(&g_payload_bytes_sub, (int)n);
+        payload_metric_set_with_rx_time(&g_payload_bytes_sub,
+                                        &g_payload_last_rx_sub_ms,
+                                        (int)n);
       } else if (ctx->sock.kind == ZCM_PROC_DATA_SOCKET_PULL) {
-        payload_metric_set(&g_payload_bytes_pull, (int)n);
+        payload_metric_set_with_rx_time(&g_payload_bytes_pull,
+                                        &g_payload_last_rx_pull_ms,
+                                        (int)n);
       }
       buf[n] = '\0';
       if (ctx->on_sub_payload) {
