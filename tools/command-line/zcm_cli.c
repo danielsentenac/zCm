@@ -115,12 +115,13 @@ static int parse_int_reply(const char *text, int *out_value) {
 }
 
 static int names_query_timeout_ms(void) {
+  const int default_timeout_ms = 250;
   const char *env = getenv("ZCM_NAMES_QUERY_TIMEOUT_MS");
-  if (!env || !*env) return 60;
+  if (!env || !*env) return default_timeout_ms;
   char *end = NULL;
   long v = strtol(env, &end, 10);
-  if (!end || *end != '\0') return 60;
-  if (v < 10 || v > 5000) return 60;
+  if (!end || *end != '\0') return default_timeout_ms;
+  if (v < 10 || v > 5000) return default_timeout_ms;
   return (int)v;
 }
 
@@ -1779,10 +1780,8 @@ static int do_names_broker_ex(const char *endpoint) {
     rows[i].pull_bytes = -1;
     (void)parse_int_reply(pub_port, &rows[i].pub_port);
     (void)parse_int_reply(push_port, &rows[i].push_port);
-    (void)parse_int_reply(pub_bytes, &rows[i].pub_bytes);
-    (void)parse_int_reply(sub_bytes, &rows[i].sub_bytes);
-    (void)parse_int_reply(push_bytes, &rows[i].push_bytes);
-    (void)parse_int_reply(pull_bytes, &rows[i].pull_bytes);
+    /* Bytes are runtime values: always sourced from per-node DATA_METRICS,
+     * never from broker LIST_EX cache. */
   }
 
   names_rows_init_display_from_broker(entries, rows, count);
