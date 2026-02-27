@@ -115,13 +115,23 @@ static int parse_int_reply(const char *text, int *out_value) {
 }
 
 static int names_query_timeout_ms(void) {
-  const int default_timeout_ms = 250;
+  const int default_timeout_ms = 1000;
   const char *env = getenv("ZCM_NAMES_QUERY_TIMEOUT_MS");
   if (!env || !*env) return default_timeout_ms;
   char *end = NULL;
   long v = strtol(env, &end, 10);
   if (!end || *end != '\0') return default_timeout_ms;
   if (v < 10 || v > 5000) return default_timeout_ms;
+  return (int)v;
+}
+
+static int names_query_attempts(void) {
+  const char *env = getenv("ZCM_NAMES_QUERY_ATTEMPTS");
+  if (!env || !*env) return 3;
+  char *end = NULL;
+  long v = strtol(env, &end, 10);
+  if (!end || *end != '\0') return 3;
+  if (v < 1 || v > 10) return 3;
   return (int)v;
 }
 
@@ -270,7 +280,10 @@ out:
 static int query_proc_command(zcm_context_t *ctx, const char *endpoint,
                               const char *cmd, char *out_text,
                               size_t out_text_size, int *out_code) {
-  return query_proc_command_once(ctx, endpoint, cmd, 1, out_text, out_text_size, out_code);
+  if (query_proc_command_once(ctx, endpoint, cmd, 1, out_text, out_text_size, out_code) == 0) {
+    return 0;
+  }
+  return query_proc_command_once(ctx, endpoint, cmd, 0, out_text, out_text_size, out_code);
 }
 
 static int query_proc_command_with_ctrl_fallback(zcm_context_t *ctx, zcm_node_t *node,
@@ -646,6 +659,8 @@ static int parse_int_or_dash(const char *text, int *out_value) {
 }
 
 static int query_node_metrics_snapshot(zcm_context_t *ctx,
+                                       zcm_node_t *node,
+                                       const char *name,
                                        const char *endpoint,
                                        names_row_info_t *row) {
   if (!ctx || !endpoint || !*endpoint || !row) return -1;
@@ -653,9 +668,25 @@ static int query_node_metrics_snapshot(zcm_context_t *ctx,
 
   char reply[4096] = {0};
   int code = 0;
-  if (query_proc_command(ctx, endpoint, "DATA_METRICS",
-                         reply, sizeof(reply), &code) != 0 ||
-      code != 200 || !reply[0]) {
+  int ok = 0;
+  int attempts = names_query_attempts();
+  for (int i = 0; i < attempts; i++) {
+    int rc = -1;
+    if (node && name && *name) {
+      rc = query_proc_command_with_ctrl_fallback(ctx, node, name, endpoint,
+                                                 "DATA_METRICS",
+                                                 reply, sizeof(reply), &code);
+    } else {
+      rc = query_proc_command(ctx, endpoint, "DATA_METRICS",
+                              reply, sizeof(reply), &code);
+    }
+    if (rc == 0 && code == 200 && reply[0]) {
+      ok = 1;
+      break;
+    }
+    if (i + 1 < attempts) usleep(20 * 1000);
+  }
+  if (!ok) {
     return -1;
   }
 
@@ -1191,22 +1222,39 @@ static int parse_sub_target_bytes_reply(const char *reply_text,
 }
 
 static void names_rows_apply_subscriber_targets_query(zcm_context_t *ctx,
+                                                      zcm_node_t *node,
                                                       zcm_node_entry_t *entries,
                                                       names_row_info_t *rows,
                                                       size_t count) {
-  if (!ctx || !entries || !rows) return;
+  if (!ctx || !node || !entries || !rows) return;
 
   for (size_t i = 0; i < count; i++) {
     if (!row_is_subscriber_candidate(&entries[i], &rows[i])) continue;
-    if (!entries[i].endpoint || !entries[i].endpoint[0]) continue;
-    if (!endpoint_is_queryable(entries[i].endpoint)) continue;
+    if (!entries[i].name || !entries[i].name[0]) continue;
+
+    const char *query_ep = NULL;
+    if (endpoint_is_queryable(rows[i].endpoint_display)) {
+      query_ep = rows[i].endpoint_display;
+    } else if (entries[i].endpoint && endpoint_is_queryable(entries[i].endpoint)) {
+      query_ep = entries[i].endpoint;
+    }
+    if (!query_ep || !query_ep[0]) continue;
 
     char reply_text[512] = {0};
     int code = 0;
-    if (query_proc_command(ctx, entries[i].endpoint,
-                           "DATA_SUB_TARGETS",
-                           reply_text, sizeof(reply_text), &code) != 0 ||
-        code != 200) {
+    int ok = 0;
+    int attempts = names_query_attempts();
+    for (int attempt = 0; attempt < attempts; attempt++) {
+      if (query_proc_command_with_ctrl_fallback(ctx, node, entries[i].name, query_ep,
+                                                "DATA_SUB_TARGETS",
+                                                reply_text, sizeof(reply_text), &code) == 0 &&
+          code == 200 && reply_text[0]) {
+        ok = 1;
+        break;
+      }
+      if (attempt + 1 < attempts) usleep(20 * 1000);
+    }
+    if (!ok) {
       continue;
     }
 
@@ -1216,6 +1264,7 @@ static void names_rows_apply_subscriber_targets_query(zcm_context_t *ctx,
       continue;
     }
 
+    snprintf(rows[i].sub_targets_csv, sizeof(rows[i].sub_targets_csv), "%s", targets_csv);
     build_role_with_sub_targets(rows[i].role, targets_csv,
                                 rows[i].role_display, sizeof(rows[i].role_display));
   }
@@ -1230,6 +1279,8 @@ static void names_rows_apply_subscriber_target_bytes_query(zcm_context_t *ctx,
 
   for (size_t i = 0; i < count; i++) {
     if (!row_is_subscriber_candidate(&entries[i], &rows[i])) continue;
+    if (!entries[i].name || !entries[i].name[0]) continue;
+    if (rows[i].sub_target_bytes_csv[0]) continue;
 
     const char *query_ep = NULL;
     if (endpoint_is_queryable(rows[i].endpoint_display)) {
@@ -1241,10 +1292,19 @@ static void names_rows_apply_subscriber_target_bytes_query(zcm_context_t *ctx,
 
     char reply_text[1024] = {0};
     int code = 0;
-    if (query_proc_command_with_ctrl_fallback(ctx, node, entries[i].name, query_ep,
-                                "DATA_PAYLOAD_BYTES_SUB_TARGETS",
-                                reply_text, sizeof(reply_text), &code) != 0 ||
-        code != 200) {
+    int ok = 0;
+    int attempts = names_query_attempts();
+    for (int attempt = 0; attempt < attempts; attempt++) {
+      if (query_proc_command_with_ctrl_fallback(ctx, node, entries[i].name, query_ep,
+                                                "DATA_PAYLOAD_BYTES_SUB_TARGETS",
+                                                reply_text, sizeof(reply_text), &code) == 0 &&
+          code == 200 && reply_text[0]) {
+        ok = 1;
+        break;
+      }
+      if (attempt + 1 < attempts) usleep(20 * 1000);
+    }
+    if (!ok) {
       continue;
     }
 
@@ -1787,12 +1847,15 @@ static int do_names_broker_ex(const char *endpoint) {
   names_rows_init_display_from_broker(entries, rows, count);
   for (size_t i = 0; i < count; i++) {
     if (!entries[i].name || !entries[i].endpoint) continue;
-    (void)query_node_metrics_snapshot(ctx, entries[i].endpoint, &rows[i]);
+    (void)query_node_metrics_snapshot(ctx, node, entries[i].name,
+                                      entries[i].endpoint, &rows[i]);
   }
   if (node) {
     names_rows_apply_subscriber_info_overrides(node, entries, rows, count);
     names_rows_apply_subscriber_resolution(entries, rows, count);
     names_rows_apply_subscriber_endpoint_corrections(entries, rows, count);
+    names_rows_apply_subscriber_targets_query(ctx, node, entries, rows, count);
+    names_rows_apply_subscriber_target_bytes_query(ctx, node, entries, rows, count);
   } else {
     names_rows_apply_subscriber_resolution(entries, rows, count);
   }
