@@ -4,18 +4,38 @@
 
 Unified process executable:
 ```bash
-./build/examples/zcm_proc <proc-config.cfg>
+./build/examples/zcm_proc <proc-config-file>
 ```
+Config content must be XML (`.cfg` samples are XML files).
 
 ## Behavior
 - Every `zcm_proc` is an infinite daemon.
-- It always answers requests over direct ZeroMQ `REQ/REP` semantics.
+- It always answers requests over direct [ØMQ/ZeroMQ](https://zeromq.org/) `REQ/REP` semantics.
 - Default command behavior includes:
   - `PING -> PONG`
   - `DATA_METRICS -> ROLE=NONE;PUB_PORT=-1;PUSH_PORT=-1;PUB_BYTES=-1;SUB_BYTES=-1;PUSH_BYTES=-1;PULL_BYTES=-1;SUB_TARGETS=-;SUB_TARGET_BYTES=-`
 - It periodically re-registers in broker so names recover after broker restart.
   - tune interval with `ZCM_PROC_REANNOUNCE_MS` (default `1000`)
+- Re-announce retries use exponential backoff capped by
+  `ZCM_PROC_REANNOUNCE_BACKOFF_MAX_MS` (default `30000`).
+- Registration host metadata can be overridden with
+  `ZCM_PROC_ADVERTISED_HOST` (fallback alias: `ZCM_ADVERTISED_HOST`).
+- `SUB/PULL` receive-byte metrics are aged with `ZCM_PROC_RX_STALE_MS`
+  (default `5000` ms): stale values are reported as `0`.
 - Optional repeated `dataSocket` entries configure bytes `PUB/SUB/PUSH/PULL` roles.
+
+## Environment Overrides
+
+| Variable | Meaning |
+| --- | --- |
+| `ZCM_PROC_CONFIG_FILE` | XML config file override. |
+| `ZCM_PROC_CONFIG_DIR` | Base directory used to resolve relative config file names. |
+| `ZCM_PROC_CONFIG_SCHEMA` | XSD schema path override. |
+| `ZCM_PROC_REANNOUNCE_MS` | Broker re-announce base period in ms (default `1000`, valid `100..60000`). |
+| `ZCM_PROC_REANNOUNCE_BACKOFF_MAX_MS` | Max exponential backoff for re-announce retries (default `30000`, valid `1000..300000`). |
+| `ZCM_PROC_ADVERTISED_HOST` | Host/IP advertised in broker registration endpoint metadata. |
+| `ZCM_ADVERTISED_HOST` | Compatibility alias used when `ZCM_PROC_ADVERTISED_HOST` is not set. |
+| `ZCM_PROC_RX_STALE_MS` | Staleness window for `SUB/PULL` receive-byte metrics before reporting `0` (default `5000`, valid `0..600000`; `0` disables aging). |
 
 ## Config
 Validation schema:
@@ -60,13 +80,14 @@ Handlers:
   - `DATA_PAYLOAD_BYTES_PULL`
 
 Process config at init (required):
-- zcm_proc reads the XML file path passed on the command line.
+- zcm_proc reads the XML file path passed on the command line (no required extension).
 - XML is validated against:
   - `$ZCM_PROC_CONFIG_SCHEMA`, else `config/schema/proc-config.xsd`
 - `<process @name>` is the process registration name.
 - `zcm_proc` is always an infinite daemon (no runtime mode).
 - `zcm_proc` re-announces its registration periodically so names are restored if broker restarts.
   - interval can be tuned with `ZCM_PROC_REANNOUNCE_MS` (default `1000`)
+  - exponential retry backoff ceiling is `ZCM_PROC_REANNOUNCE_BACKOFF_MAX_MS` (default `30000`)
 - Optional repeated `<dataSocket>` configures bytes `PUB/SUB/PUSH/PULL`:
   - `type=PUB|SUB|PUSH|PULL`
   - `PUB`/`PUSH` auto-allocate a port from the current domain range and use optional `payload`, `intervalMs`

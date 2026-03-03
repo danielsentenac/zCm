@@ -122,6 +122,13 @@ Shared runtime variables (`zcm`, `zcm_broker`, `zcm_proc`):
 | `ZCMMGR` | Alternative directory containing `ZCmDomains`. |
 | `ZCMROOT` | Fallback root; `ZCmDomains` read from `$ZCMROOT/mgr/ZCmDomains`. |
 
+`zcm` CLI specific:
+
+| Variable | Meaning |
+| --- | --- |
+| `ZCM_NAMES_QUERY_TIMEOUT_MS` | Per-query timeout used by `zcm names` when probing nodes for metrics (default `1000`, valid `10..5000`). |
+| `ZCM_NAMES_QUERY_ATTEMPTS` | Retry attempts used by `zcm names` for broker/node query steps (default `3`, valid `1..10`). |
+
 `zcm_proc` specific:
 
 | Variable | Meaning |
@@ -129,7 +136,19 @@ Shared runtime variables (`zcm`, `zcm_broker`, `zcm_proc`):
 | `ZCM_PROC_CONFIG_FILE` | XML config file override. |
 | `ZCM_PROC_CONFIG_DIR` | Base directory used to resolve relative config file names. |
 | `ZCM_PROC_CONFIG_SCHEMA` | XSD schema path override. |
-| `ZCM_PROC_REANNOUNCE_MS` | Broker re-announce period in ms (default `1000`). |
+| `ZCM_PROC_REANNOUNCE_MS` | Broker re-announce base period in ms (default `1000`, valid `100..60000`). |
+| `ZCM_PROC_REANNOUNCE_BACKOFF_MAX_MS` | Maximum exponential backoff delay for re-announce retries (default `30000`, valid `1000..300000`). |
+| `ZCM_PROC_ADVERTISED_HOST` | Host/IP advertised in broker registration endpoint metadata. |
+| `ZCM_ADVERTISED_HOST` | Compatibility alias used when `ZCM_PROC_ADVERTISED_HOST` is not set. |
+| `ZCM_PROC_RX_STALE_MS` | Staleness window for `SUB/PULL` receive-byte metrics before reporting `0` (default `5000`, valid `0..600000`; `0` disables staleness aging). |
+
+`zcm_broker` specific:
+
+| Variable | Meaning |
+| --- | --- |
+| `ZCM_BROKER_REMOTE_PROBE_INTERVAL_MS` | Interval for remote registration liveness probes (default `3000`, valid `250..120000`). |
+| `ZCM_BROKER_REMOTE_PROBE_FAILS` | Consecutive failed probes before dropping a stale remote entry (default `3`, valid `1..20`). |
+| `ZCM_BROKER_TRACE_REG` | When truthy, enables broker register/unregister trace logs (`0`/`false`/`no` disables). |
 
 Build-time variables (`cmake`/toolchain):
 
@@ -143,15 +162,15 @@ Build-time variables (`cmake`/toolchain):
 Example exports (runtime):
 
 ```bash
-export ZCMDOMAIN=Virgo
-export ZCMROOT=/virgoDev/zCm/v0r1
+export ZCMDOMAIN=myplace
+export ZCMROOT=/path/to/zcmroot
 export ZCMMGR=$ZCMROOT/mgr
 ```
 
 Example exports (build):
 
 ```bash
-export ZCM_ZMQ_ROOT=/virgoDev/zmq/v4r35/zeromq-4.3.5
+export ZCM_ZMQ_ROOT=/path/to/zeromq
 export ZCM_ZMQ_INCLUDE_DIR=$ZCM_ZMQ_ROOT/include
-export ZCM_ZMQ_LIBRARY=$ZCM_ZMQ_ROOT/src/.libs/libzmq.so
+export ZCM_ZMQ_LIBRARY=$ZCM_ZMQ_ROOT/lib/libzmq.so
 ```

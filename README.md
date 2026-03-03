@@ -1,6 +1,6 @@
 # zCm
 
-Lightweight messaging toolkit with a directory-service broker and direct peer-to-peer data paths. The broker maintains the registry (name → endpoint), while applications connect directly to exchange data after lookup. This matches the "broker as a directory service" architecture popularized in ØMQ/ZeroMQ patterns, where the broker handles discovery and peers handle transfer.
+Lightweight messaging toolkit with a directory-service broker and direct peer-to-peer data paths. The broker maintains the registry (name → endpoint), while applications connect directly to exchange data after lookup. This matches the "broker as a directory service" architecture popularized in [ØMQ/ZeroMQ](https://zeromq.org/) patterns, where the broker handles discovery and peers handle transfer.
 
 Published docs: https://danielsentenac.github.io/zCm/
 
@@ -36,7 +36,7 @@ Diagram (ASCII):
 - Broker/registry (`zcm-broker`) for name -> endpoint lookup
 - Client API (`zcm-node`) to register and lookup
 - Minimal typed message envelope (`zcm-msg`)
-- ZeroMQ transport support (`tcp`, `ipc`, `inproc`)
+- [ØMQ/ZeroMQ](https://zeromq.org/) transport support (`tcp`, `ipc`, `inproc`)
 - Direct peer-to-peer data transfer after broker lookup
 
 ## Build

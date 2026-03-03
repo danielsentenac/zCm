@@ -54,3 +54,11 @@ Broker startup behavior:
 - After successful startup, it updates the current `ZCMDOMAIN` row in `ZCmDomains`:
   - nameserver host -> detected local IPv4/hostname
   - nameserver port -> active broker port
+
+Broker runtime environment variables:
+
+| Variable | Meaning |
+| --- | --- |
+| `ZCM_BROKER_REMOTE_PROBE_INTERVAL_MS` | Interval for remote registration liveness probes (default `3000`, valid `250..120000`). |
+| `ZCM_BROKER_REMOTE_PROBE_FAILS` | Consecutive failed probes before dropping a stale remote entry (default `3`, valid `1..20`). |
+| `ZCM_BROKER_TRACE_REG` | When truthy, enables register/unregister trace logs (`0`/`false`/`no` disables). |
