@@ -235,8 +235,8 @@ static int pick_free_tcp_port(void) {
   return port;
 }
 
-static int pick_distinct_ports(int *broker_port, int *first_port) {
-  if (!broker_port || !first_port) return -1;
+static int pick_distinct_ports(int *broker_port, int *port_range_start) {
+  if (!broker_port || !port_range_start) return -1;
   for (int i = 0; i < 64; i++) {
     int b = pick_free_tcp_port();
     int f = pick_free_tcp_port();
@@ -245,7 +245,7 @@ static int pick_distinct_ports(int *broker_port, int *first_port) {
     if (f > b && f < (b + 200)) continue;
     if (b > f && b < (f + 200)) continue;
     *broker_port = b;
-    *first_port = f;
+    *port_range_start = f;
     return 0;
   }
   return -1;
@@ -448,15 +448,15 @@ int main(void) {
   }
 
   int broker_port = -1;
-  int first_port = -1;
-  if (pick_distinct_ports(&broker_port, &first_port) != 0) {
+  int port_range_start = -1;
+  if (pick_distinct_ports(&broker_port, &port_range_start) != 0) {
     fprintf(stderr, "zcm_cli_workflow: SKIP (no local TCP port allocation available)\n");
     rc = 0;
     goto done;
   }
 
   char db_line[256] = {0};
-  snprintf(db_line, sizeof(db_line), "wf 127.0.0.1 %d %d 128 repo\n", broker_port, first_port);
+  snprintf(db_line, sizeof(db_line), "wf 127.0.0.1 %d %d 128\n", broker_port, port_range_start);
   if (write_text_file(db_path, db_line) != 0) {
     perror("write ZCmDomains");
     goto done;

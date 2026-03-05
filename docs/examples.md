@@ -8,6 +8,13 @@ export ZCMMGR=$ZCMROOT/mgr
 ```
 Full variable reference: \subpage tool_zcm "zcm" (`Environment Variables` section).
 
+`ZCmDomains` entry format used by all examples:
+```text
+<domain-name> <broker-host> <broker-port> <port-range-start> <port-range-size>
+myplace 127.0.0.1 5555 7000 100
+```
+Field-by-field description: \subpage tool_zcm "zcm" (`Broker resolution for zcm CLI and broker` section).
+
 Start a broker (endpoint via `ZCmDomains`):
 ```bash
 ZCMDOMAIN=myplace ZCMMGR=/path/to/zcmroot/mgr ./build/tools/zcm_broker

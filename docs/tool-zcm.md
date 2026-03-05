@@ -105,9 +105,20 @@ Broker resolution for `zcm` CLI and broker:
 - `ZCmDomains` is the zCm domain registry file (broker endpoint + port range per domain).
 - Used by `zcm`, `zcm_broker`, and `zcm_proc`.
 - Line format:
-  - `<domain> <nameserver-host> <nameserver-port> <first-port> <range-size> <repository>`
+  - `<domain-name> <broker-host> <broker-port> <port-range-start> <port-range-size>`
   - Example:
-    - `myplace 127.0.0.1 5555 7000 100 repo`
+    - `myplace 127.0.0.1 5555 7000 100`
+- Field reference (all consumers):
+
+| Field | Required | Used by | Meaning |
+| --- | --- | --- | --- |
+| `domain-name` | yes | all | Lookup key matched against `ZCMDOMAIN`. |
+| `broker-host` | yes | `zcm`, `zcm_broker`, `zcm_proc`, `zFd`, `zFbs`, `ZcmPubBridge`, `jchv/zJchv` | Hostname or IP used to build broker endpoint `tcp://<broker-host>:<broker-port>`. |
+| `broker-port` | yes | `zcm`, `zcm_broker`, `zcm_proc`, `zFd`, `zFbs`, `ZcmPubBridge`, `jchv/zJchv` | Broker port (expected TCP `1..65535`). |
+| `port-range-start` | recommended | `zcm_proc` (bind allocation) | First candidate port for local data/control binding. If missing or invalid, defaults to `7000`. |
+| `port-range-size` | recommended | `zcm_proc` (bind allocation) | Number of sequential ports scanned from `port-range-start`. If missing or invalid, defaults to `100`. |
+
+No trailing `repository`/`repo` field is used by runtime components.
 
 ## Environment Variables (export reference)
 

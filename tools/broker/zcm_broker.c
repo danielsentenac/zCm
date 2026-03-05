@@ -185,11 +185,11 @@ static int update_domain_host_in_file(const char *file_name, const char *domain,
     }
 
     if (ntok >= 3 && strcmp(tokens[0], domain) == 0) {
-      fprintf(out, "%s %s %d", tokens[0], new_host, new_port);
-      for (size_t i = 3; i < ntok; i++) {
-        fprintf(out, " %s", tokens[i]);
-      }
-      fputc('\n', out);
+      const char *port_range_start = (ntok >= 4 && tokens[3] && *tokens[3]) ? tokens[3] : "7000";
+      const char *port_range_size = (ntok >= 5 && tokens[4] && *tokens[4]) ? tokens[4] : "100";
+      fprintf(out, "%s %s %d %s %s\n",
+              tokens[0], new_host, new_port,
+              port_range_start, port_range_size);
       updated = 1;
     } else {
       fputs(original, out);

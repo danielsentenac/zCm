@@ -331,7 +331,8 @@ static int load_proc_config(const char *name,
   return 0;
 }
 
-static int load_domain_info(char **broker_ep, char **host_out, int *first_port, int *range_size) {
+static int load_domain_info(char **broker_ep, char **host_out,
+                            int *out_port_range_start, int *out_port_range_size) {
   const char *domain = getenv("ZCMDOMAIN");
   if (!domain || !*domain) return -1;
 
@@ -366,9 +367,9 @@ static int load_domain_info(char **broker_ep, char **host_out, int *first_port, 
     while (p && (*p == ' ' || *p == '\t')) p++;
     char *tok_port = strsep(&p, " \t");
     while (p && (*p == ' ' || *p == '\t')) p++;
-    char *tok_first = strsep(&p, " \t");
+    char *tok_port_range_start = strsep(&p, " \t");
     while (p && (*p == ' ' || *p == '\t')) p++;
-    char *tok_range = strsep(&p, " \t");
+    char *tok_port_range_size = strsep(&p, " \t");
 
     if (!tok_host || !tok_port || !*tok_host || !*tok_port) {
       fclose(f);
@@ -384,8 +385,12 @@ static int load_domain_info(char **broker_ep, char **host_out, int *first_port, 
     fclose(f);
     *broker_ep = endpoint;
     if (host_out) *host_out = strdup(tok_host);
-    if (first_port) *first_port = tok_first ? atoi(tok_first) : 0;
-    if (range_size) *range_size = tok_range ? atoi(tok_range) : 0;
+    if (out_port_range_start) {
+      *out_port_range_start = tok_port_range_start ? atoi(tok_port_range_start) : 0;
+    }
+    if (out_port_range_size) {
+      *out_port_range_size = tok_port_range_size ? atoi(tok_port_range_size) : 0;
+    }
     return 0;
   }
 
@@ -450,11 +455,12 @@ static void *ctrl_thread_main(void *arg) {
   return NULL;
 }
 
-static int bind_in_range(zcm_socket_t *sock, int first_port, int range_size, int *out_port, int skip_port) {
-  if (first_port <= 0) first_port = 7000;
-  if (range_size <= 0) range_size = 100;
-  for (int i = 0; i < range_size; i++) {
-    int port = first_port + i;
+static int bind_in_port_range(zcm_socket_t *sock, int port_range_start, int port_range_size,
+                              int *out_port, int skip_port) {
+  if (port_range_start <= 0) port_range_start = 7000;
+  if (port_range_size <= 0) port_range_size = 100;
+  for (int i = 0; i < port_range_size; i++) {
+    int port = port_range_start + i;
     if (port == skip_port) continue;
     char bind_ep[256];
     snprintf(bind_ep, sizeof(bind_ep), "tcp://0.0.0.0:%d", port);
@@ -481,8 +487,8 @@ int zcm_proc_init(const char *name, zcm_socket_type_t data_type, int bind_data,
 
   char *broker = NULL;
   char *domain_host = NULL;
-  int first_port = 0;
-  int range_size = 0;
+  int port_range_start = 0;
+  int port_range_size = 0;
 
   zcm_context_t *ctx = NULL;
   zcm_node_t *node = NULL;
@@ -524,7 +530,8 @@ int zcm_proc_init(const char *name, zcm_socket_type_t data_type, int bind_data,
   if (load_proc_config(name, &cfg_data_type, &cfg_bind_data, &cfg_ctrl_timeout_ms) != 0) {
     goto fail;
   }
-  if (load_domain_info(&broker, &domain_host, &first_port, &range_size) != 0) {
+  if (load_domain_info(&broker, &domain_host,
+                       &port_range_start, &port_range_size) != 0) {
     fprintf(stderr, "zcm_proc: missing ZCMDOMAIN or ZCmDomains entry\n");
     goto fail;
   }
@@ -537,7 +544,7 @@ int zcm_proc_init(const char *name, zcm_socket_type_t data_type, int bind_data,
   if (cfg_bind_data) {
     data = zcm_socket_new(ctx, cfg_data_type);
     if (!data) goto fail;
-    if (bind_in_range(data, first_port, range_size, &data_port, -1) != 0) {
+    if (bind_in_port_range(data, port_range_start, port_range_size, &data_port, -1) != 0) {
       fprintf(stderr, "zcm_proc: data bind failed\n");
       goto fail;
     }
@@ -546,7 +553,7 @@ int zcm_proc_init(const char *name, zcm_socket_type_t data_type, int bind_data,
   ctrl = zcm_socket_new(ctx, ZCM_SOCK_REP);
   if (!ctrl) goto fail;
   zcm_socket_set_timeouts(ctrl, cfg_ctrl_timeout_ms);
-  if (bind_in_range(ctrl, first_port, range_size, &ctrl_port, data_port) != 0) {
+  if (bind_in_port_range(ctrl, port_range_start, port_range_size, &ctrl_port, data_port) != 0) {
     fprintf(stderr, "zcm_proc: control bind failed\n");
     goto fail;
   }

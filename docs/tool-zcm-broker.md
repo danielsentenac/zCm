@@ -45,15 +45,28 @@ Broker resolution for `zcm_broker`:
   - all `zcm` commands (`names`, `ping`, `send`, `kill`, ...)
   - `zcm_proc` startup/registration and runtime data-worker port allocation
 - Line format:
-  - `<domain> <nameserver-host> <nameserver-port> <first-port> <range-size> <repository>`
+  - `<domain-name> <broker-host> <broker-port> <port-range-start> <port-range-size>`
   - Example:
-    - `myplace 127.0.0.1 5555 7000 100 repo`
+    - `myplace 127.0.0.1 5555 7000 100`
+- Field meanings:
+  - `domain-name`: lookup key selected by `ZCMDOMAIN`.
+  - `broker-host`: host/IP used to build `tcp://<broker-host>:<broker-port>`.
+  - `broker-port`: broker bind/lookup port.
+  - `port-range-start`: first port in the dynamic bind window used by `zcm_proc`.
+  - `port-range-size`: number of ports in that dynamic bind window.
+  - defaults for `zcm_proc` bind window when missing/invalid:
+    - `port-range-start=7000`
+    - `port-range-size=100`
+
+No trailing `repository`/`repo` field is used by runtime components.
 
 Broker startup behavior:
 - `zcm_broker` binds on the selected port using the local machine address.
 - After successful startup, it updates the current `ZCMDOMAIN` row in `ZCmDomains`:
-  - nameserver host -> detected local IPv4/hostname
-  - nameserver port -> active broker port
+  - `broker-host` -> detected local IPv4/hostname
+  - `broker-port` -> active broker port
+  - row is normalized to 5 fields:
+    - `<domain-name> <broker-host> <broker-port> <port-range-start> <port-range-size>`
 
 Broker runtime environment variables:
 

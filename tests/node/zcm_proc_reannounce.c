@@ -38,8 +38,8 @@ static int pick_free_tcp_port(void) {
   return port;
 }
 
-static int pick_distinct_ports(int *broker_port, int *first_port) {
-  if (!broker_port || !first_port) return -1;
+static int pick_distinct_ports(int *broker_port, int *port_range_start) {
+  if (!broker_port || !port_range_start) return -1;
   for (int i = 0; i < 64; i++) {
     int b = pick_free_tcp_port();
     int f = pick_free_tcp_port();
@@ -48,7 +48,7 @@ static int pick_distinct_ports(int *broker_port, int *first_port) {
     if (f > b && f < (b + 128)) continue;
     if (b > f && b < (f + 128)) continue;
     *broker_port = b;
-    *first_port = f;
+    *port_range_start = f;
     return 0;
   }
   return -1;
@@ -70,8 +70,8 @@ int main(void) {
   }
 
   int broker_port = -1;
-  int first_port = -1;
-  if (pick_distinct_ports(&broker_port, &first_port) != 0) {
+  int port_range_start = -1;
+  if (pick_distinct_ports(&broker_port, &port_range_start) != 0) {
     printf("zcm_proc_reannounce: SKIP (no local TCP port allocation available)\n");
     rc = 0;
     goto done;
@@ -83,7 +83,7 @@ int main(void) {
     perror("fopen");
     goto done;
   }
-  fprintf(db, "reannounce_domain 127.0.0.1 %d %d 64 repo\n", broker_port, first_port);
+  fprintf(db, "reannounce_domain 127.0.0.1 %d %d 64\n", broker_port, port_range_start);
   fclose(db);
 
   snprintf(cfg_path, sizeof(cfg_path), "%s/reannounce.cfg", tmp_dir);

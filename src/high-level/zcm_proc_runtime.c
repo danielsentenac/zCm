@@ -358,8 +358,8 @@ static int parse_port_str(const char *text, int *out) {
   return 0;
 }
 
-static int load_domain_port_range(int *out_first_port, int *out_range_size) {
-  if (!out_first_port || !out_range_size) return -1;
+static int load_domain_port_range(int *out_port_range_start, int *out_port_range_size) {
+  if (!out_port_range_start || !out_port_range_size) return -1;
 
   const char *domain = getenv("ZCMDOMAIN");
   if (!domain || !*domain) return -1;
@@ -391,22 +391,22 @@ static int load_domain_port_range(int *out_first_port, int *out_range_size) {
     if (!tok_domain || strcmp(tok_domain, domain) != 0) continue;
 
     while (p && (*p == ' ' || *p == '\t')) p++;
-    (void)strsep(&p, " \t"); /* nameserver host */
+    (void)strsep(&p, " \t"); /* broker host */
     while (p && (*p == ' ' || *p == '\t')) p++;
-    (void)strsep(&p, " \t"); /* nameserver port */
+    (void)strsep(&p, " \t"); /* broker port */
     while (p && (*p == ' ' || *p == '\t')) p++;
-    char *tok_first = strsep(&p, " \t");
+    char *tok_port_range_start = strsep(&p, " \t");
     while (p && (*p == ' ' || *p == '\t')) p++;
-    char *tok_range = strsep(&p, " \t");
+    char *tok_port_range_size = strsep(&p, " \t");
 
-    int first_port = tok_first ? atoi(tok_first) : 0;
-    int range_size = tok_range ? atoi(tok_range) : 0;
+    int port_range_start = tok_port_range_start ? atoi(tok_port_range_start) : 0;
+    int port_range_size = tok_port_range_size ? atoi(tok_port_range_size) : 0;
     fclose(f);
 
-    if (first_port <= 0) first_port = 7000;
-    if (range_size <= 0) range_size = 100;
-    *out_first_port = first_port;
-    *out_range_size = range_size;
+    if (port_range_start <= 0) port_range_start = 7000;
+    if (port_range_size <= 0) port_range_size = 100;
+    *out_port_range_start = port_range_start;
+    *out_port_range_size = port_range_size;
     return 0;
   }
 
@@ -417,12 +417,12 @@ static int load_domain_port_range(int *out_first_port, int *out_range_size) {
 static int bind_pub_in_domain_range(zcm_socket_t *pub, int *out_port) {
   if (!pub || !out_port) return -1;
 
-  int first_port = 7000;
-  int range_size = 100;
-  (void)load_domain_port_range(&first_port, &range_size);
+  int port_range_start = 7000;
+  int port_range_size = 100;
+  (void)load_domain_port_range(&port_range_start, &port_range_size);
 
-  for (int i = 0; i < range_size; i++) {
-    int port = first_port + i;
+  for (int i = 0; i < port_range_size; i++) {
+    int port = port_range_start + i;
     if (port <= 0 || port > 65535) continue;
     char ep[128];
     snprintf(ep, sizeof(ep), "tcp://0.0.0.0:%d", port);
