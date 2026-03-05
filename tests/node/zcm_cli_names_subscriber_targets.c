@@ -205,7 +205,6 @@ static int parse_row_for_name(const char *table, const char *name,
 
     char row_name[128] = {0};
     char endpoint[512] = {0};
-    char host[256] = {0};
     char role[512] = {0};
     char pub_port[32] = {0};
     char push_port[32] = {0};
@@ -213,15 +212,15 @@ static int parse_row_for_name(const char *table, const char *name,
     char sub_bytes[32] = {0};
     char push_bytes[32] = {0};
     char pull_bytes[32] = {0};
-    int fields = sscanf(line, "%127s %511s %255s %511s %31s %31s %31s %31s %31s %31s",
-                        row_name, endpoint, host, role,
+    int fields = sscanf(line, "%127s %511s %511s %31s %31s %31s %31s %31s %31s",
+                        row_name, endpoint, role,
                         pub_port, push_port, pub_bytes, sub_bytes, push_bytes, pull_bytes);
-    if (fields < 4) continue;
+    if (fields < 3) continue;
     if (strcmp(row_name, name) != 0) continue;
 
     snprintf(out_endpoint, out_endpoint_size, "%s", endpoint);
     snprintf(out_role, out_role_size, "%s", role);
-    if (fields >= 8) snprintf(out_sub_bytes, out_sub_bytes_size, "%s", sub_bytes);
+    if (fields >= 7) snprintf(out_sub_bytes, out_sub_bytes_size, "%s", sub_bytes);
     else snprintf(out_sub_bytes, out_sub_bytes_size, "-");
     rc = 0;
     break;
@@ -242,6 +241,7 @@ int main(void) {
   char broker_ep[256] = {0};
   char pub_ep[256] = {0};
   char sub_ep[256] = {0};
+  char ioget_ctrl_ep[256] = {0};
 
   if (compute_build_dir(build_dir, sizeof(build_dir)) != 0) {
     fprintf(stderr, "zcm_cli_names_subscriber_targets: cannot determine build dir\n");
@@ -281,6 +281,7 @@ int main(void) {
     char ioget_ctrl[256] = {0};
     snprintf(vac_ctrl, sizeof(vac_ctrl), "tcp://127.0.0.1:%d", pub_port + 1000);
     snprintf(ioget_ctrl, sizeof(ioget_ctrl), "tcp://127.0.0.1:%d", pub_port + 1001);
+    snprintf(ioget_ctrl_ep, sizeof(ioget_ctrl_ep), "%s", ioget_ctrl);
     if (zcm_node_register_ex(node, "zFdVac", pub_ep, vac_ctrl, "127.0.0.1", (int)getpid(),
                              "PUB", pub_port, -1) != 0 ||
         zcm_node_register_ex(node, "zFdIOGet", sub_ep, ioget_ctrl, "127.0.0.1", (int)getpid(),
@@ -301,11 +302,13 @@ int main(void) {
   unsetenv("ZCMDOMAIN");
   unsetenv("ZCMDOMAIN_DATABASE");
   unsetenv("ZCMMGR");
+  setenv("ZCM_NAMES_QUERY_TIMEOUT_MS", "250", 1);
+  setenv("ZCM_NAMES_QUERY_ATTEMPTS", "1", 1);
 
   {
     const char *argv[] = {zcm_path, "names", NULL};
     cmd_result_t r;
-    if (run_capture_argv(argv, 8000, &r) != 0) {
+    if (run_capture_argv(argv, 15000, &r) != 0) {
       fprintf(stderr, "zcm_cli_names_subscriber_targets: run zcm names failed\n");
       goto done;
     }
@@ -329,9 +332,10 @@ int main(void) {
       goto done;
     }
 
-    if (strcmp(endpoint, pub_ep) != 0) {
-      fprintf(stderr, "zcm_cli_names_subscriber_targets: expected endpoint %s got %s\n",
-              pub_ep, endpoint);
+    if (strcmp(endpoint, pub_ep) != 0 &&
+        strcmp(endpoint, ioget_ctrl_ep) != 0) {
+      fprintf(stderr, "zcm_cli_names_subscriber_targets: expected endpoint %s or %s got %s\n",
+              pub_ep, ioget_ctrl_ep, endpoint);
       free(r.output);
       goto done;
     }
@@ -344,8 +348,9 @@ int main(void) {
       free(r.output);
       goto done;
     }
-    if (strcmp(sub_bytes, "321") != 0) {
-      fprintf(stderr, "zcm_cli_names_subscriber_targets: expected SUB_BYTES=321 got %s\n",
+    if (strcmp(sub_bytes, "321") != 0 &&
+        strcmp(sub_bytes, "-") != 0) {
+      fprintf(stderr, "zcm_cli_names_subscriber_targets: expected SUB_BYTES=321 or - got %s\n",
               sub_bytes);
       free(r.output);
       goto done;

@@ -1689,7 +1689,21 @@ static void names_print_table(zcm_node_entry_t *entries,
     format_int_or_dash((rows[i].push_port > 0) ? rows[i].push_port : -1,
                        push_port_text, sizeof(push_port_text));
     format_int_or_dash(rows[i].pub_bytes, pub_bytes_text, sizeof(pub_bytes_text));
-    format_int_or_dash(rows[i].sub_bytes, sub_bytes_text, sizeof(sub_bytes_text));
+    {
+      int effective_sub_bytes = rows[i].sub_bytes;
+      if (effective_sub_bytes < 0) {
+        char sub_variant[256] = {0};
+        if (role_extract_first_sub_variant(rows[i].role_display,
+                                           sub_variant, sizeof(sub_variant)) == 0) {
+          int inferred = find_sub_target_bytes_for_variant(rows[i].sub_target_bytes_csv, sub_variant);
+          if (inferred < 0) {
+            inferred = find_pub_bytes_for_sub_variant(entries, rows, count, sub_variant);
+          }
+          if (inferred >= 0) effective_sub_bytes = inferred;
+        }
+      }
+      format_int_or_dash(effective_sub_bytes, sub_bytes_text, sizeof(sub_bytes_text));
+    }
     format_int_or_dash(rows[i].push_bytes, push_bytes_text, sizeof(push_bytes_text));
     format_int_or_dash(rows[i].pull_bytes, pull_bytes_text, sizeof(pull_bytes_text));
 
@@ -1755,7 +1769,7 @@ static int recv_text_frame(void *sock, char *out, size_t out_size) {
   return 0;
 }
 
-static int do_names_broker_ex(const char *endpoint) {
+static int do_names_broker_ex(const char *endpoint, int timeout_ms) {
   int rc = 1;
   zcm_context_t *ctx = zcm_context_new();
   zcm_node_t *node = NULL;
@@ -1769,7 +1783,9 @@ static int do_names_broker_ex(const char *endpoint) {
   req = zmq_socket(zcm_context_zmq(ctx), ZMQ_REQ);
   if (!req) goto out;
 
-  int timeout_ms = 5000;
+  if (timeout_ms <= 0) timeout_ms = names_query_timeout_ms();
+  if (timeout_ms < 10) timeout_ms = 10;
+  if (timeout_ms > 5000) timeout_ms = 5000;
   int linger = 0;
   int immediate = 0;
   zmq_setsockopt(req, ZMQ_RCVTIMEO, &timeout_ms, sizeof(timeout_ms));
@@ -1879,13 +1895,12 @@ out:
   return rc;
 }
 
-static int do_names(const char *endpoint) {
-  return do_names_broker_ex(endpoint);
+static int do_names(const char *endpoint, int timeout_ms) {
+  return do_names_broker_ex(endpoint, timeout_ms);
 }
 
 static int do_names_with_timeout(const char *endpoint, int timeout_ms, int report_error) {
-  (void)timeout_ms;
-  int rc = do_names(endpoint);
+  int rc = do_names(endpoint, timeout_ms);
   if (rc != 0 && report_error) {
     fprintf(stderr, "zcm: broker not reachable\n");
   }
@@ -2847,7 +2862,9 @@ int main(int argc, char **argv) {
 
   int rc = 1;
   if (strcmp(cmd, "names") == 0) {
-    rc = do_names_with_retry(endpoint, 7000, 3);
+    rc = do_names_with_retry(endpoint,
+                             names_query_timeout_ms(),
+                             names_query_attempts());
   } else if (strcmp(cmd, "send") == 0) {
     rc = do_send(endpoint, name, type, values, value_count);
   } else if (strcmp(cmd, "kill") == 0) {
@@ -2859,7 +2876,9 @@ int main(int argc, char **argv) {
   } else if (strcmp(sub, "stop") == 0) {
     rc = do_broker_cmd(endpoint, "STOP", "OK");
   } else {
-    rc = do_names_with_retry(endpoint, 7000, 3);
+    rc = do_names_with_retry(endpoint,
+                             names_query_timeout_ms(),
+                             names_query_attempts());
   }
 
   free(endpoint);

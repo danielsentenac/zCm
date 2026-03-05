@@ -200,6 +200,29 @@ static int pick_distinct_ports(int *broker_port, int *data_port) {
   return -1;
 }
 
+static int register_ex_with_retry(zcm_node_t *node,
+                                  const char *name,
+                                  const char *endpoint,
+                                  const char *ctrl_endpoint,
+                                  const char *host,
+                                  int pid,
+                                  const char *role,
+                                  int pub_port,
+                                  int push_port,
+                                  int timeout_ms) {
+  if (!node || !name || !endpoint || !ctrl_endpoint || !host || !role) return -1;
+  int elapsed = 0;
+  while (1) {
+    int rc = zcm_node_register_ex(node, name, endpoint, ctrl_endpoint, host, pid,
+                                  role, pub_port, push_port);
+    if (rc == 0 || rc == ZCM_NODE_REGISTER_EX_DUPLICATE) return 0;
+    if (timeout_ms > 0 && elapsed >= timeout_ms) break;
+    usleep(100 * 1000);
+    elapsed += 100;
+  }
+  return -1;
+}
+
 static void *legacy_ping_server_main(void *arg) {
   ping_server_t *srv = (ping_server_t *)arg;
   zcm_socket_t *rep = zcm_socket_new(srv->ctx, ZCM_SOCK_REP);
@@ -276,10 +299,11 @@ int main(void) {
     fprintf(stderr, "zcm_cli_ping_fallback: node init failed\n");
     goto done;
   }
-  if (zcm_node_register_ex(node, "legacy",
-                           data_ep, data_ep,
-                           "127.0.0.1", (int)getpid(),
-                           "UNKNOWN", -1, -1) != 0) {
+  if (register_ex_with_retry(node, "legacy",
+                             data_ep, data_ep,
+                             "127.0.0.1", (int)getpid(),
+                             "NONE", -1, -1,
+                             5000) != 0) {
     fprintf(stderr, "zcm_cli_ping_fallback: register_ex failed\n");
     goto done;
   }

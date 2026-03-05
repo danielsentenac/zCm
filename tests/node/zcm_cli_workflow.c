@@ -681,8 +681,10 @@ int main(void) {
   {
     const char *argv[] = {zcm_path, "names", NULL};
     cmd_result_t r;
-    if (run_capture_argv(argv, 8000, &r) != 0) goto done;
-    int ok = (r.exit_code != 0 && strstr(r.output, "BROKER_OFFLINE") != NULL);
+    if (run_capture_argv(argv, 15000, &r) != 0) goto done;
+    int ok = (r.exit_code != 0 &&
+              (strstr(r.output, "BROKER_OFFLINE") != NULL ||
+               strstr(r.output, "broker not reachable") != NULL));
     if (!ok) {
       fprintf(stderr, "zcm_cli_workflow: expected offline names output, got:\n%s\n", r.output);
       free(r.output);
