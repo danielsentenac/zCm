@@ -669,12 +669,13 @@ int main(void) {
     const char *argv[] = {zcm_path, "broker", "stop", NULL};
     cmd_result_t r;
     if (run_capture_argv(argv, 8000, &r) != 0) goto done;
-    int ok = (r.exit_code == 0);
-    free(r.output);
+    int ok = (r.exit_code == 0 && strstr(r.output, "OK") != NULL);
     if (!ok) {
-      fprintf(stderr, "zcm_cli_workflow: broker stop failed\n");
+      fprintf(stderr, "zcm_cli_workflow: broker stop failed, output was:\n%s\n", r.output);
+      free(r.output);
       goto done;
     }
+    free(r.output);
   }
   stop_pid(&broker_pid);
 
