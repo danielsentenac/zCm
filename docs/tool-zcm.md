@@ -49,7 +49,7 @@ Kill (shutdown) a registered process:
 Control-command behavior:
 - `zcm ping NAME` sends control `PING` and expects `REPLY/PONG`.
 - `zcm kill NAME` sends control `KILL` and expects `REPLY/OK` before node exit.
-- `zcm broker stop` sends broker control `SHUTDOWN` and expects `OK`.
+- `zcm broker stop` sends broker control `STOP` and expects `zcm_broker: stopped`.
 
 Control endpoint resolution:
 - `zcm kill`/`zcm ping` first use broker `ctrl_endpoint` metadata.

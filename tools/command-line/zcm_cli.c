@@ -2874,7 +2874,7 @@ int main(int argc, char **argv) {
   } else if (strcmp(sub, "ping") == 0) {
     rc = do_broker_cmd(endpoint, "PING", "PONG");
   } else if (strcmp(sub, "stop") == 0) {
-    rc = do_broker_cmd(endpoint, "STOP", "OK");
+    rc = do_broker_cmd(endpoint, "STOP", "zcm_broker: stopped");
   } else {
     rc = do_names_with_retry(endpoint,
                              names_query_timeout_ms(),

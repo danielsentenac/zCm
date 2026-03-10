@@ -64,6 +64,8 @@ static int build_tcp_endpoint_text(const char *host, int port,
 #define ZCM_BROKER_REMOTE_PROBE_FAILS_MAX 20
 #define ZCM_BROKER_STOP_ACK_GRACE_US 100000
 
+static const char *k_broker_stop_reply = "zcm_broker: stopped";
+
 static void entry_reset_metrics(struct zcm_broker_entry *e) {
   if (!e) return;
   snprintf(e->role, sizeof(e->role), "UNKNOWN");
@@ -1294,7 +1296,7 @@ static void *broker_thread(void *arg) {
       zmq_send(sock, "PONG", 4, 0);
     } else if (strcmp(cmd, "STOP") == 0) {
       broker_sock_drain_remaining_parts(sock);
-      if (zmq_send(sock, "OK", 2, 0) >= 0) {
+      if (zmq_send(sock, k_broker_stop_reply, strlen(k_broker_stop_reply), 0) >= 0) {
         /* Give the requestor a chance to receive the final ACK before teardown. */
         usleep(ZCM_BROKER_STOP_ACK_GRACE_US);
       }
