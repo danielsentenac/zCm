@@ -19,6 +19,7 @@ set(ZCM_ZMQ_LIBRARY "$ENV{ZCM_ZMQ_LIBRARY}" CACHE FILEPATH "Absolute path to lib
 add_library(zcm_lib
   src/low-level/zcm_context.c
   src/high-level/zcm_broker.c
+  src/high-level/zcm_domain.c
   src/low-level/zcm_node.c
   src/high-level/zcm_proc.c
   src/high-level/zcm_proc_runtime.c
@@ -225,6 +226,29 @@ if(ZCM_BUILD_TESTS)
     RUNTIME_OUTPUT_DIRECTORY ${ZCM_TEST_OUTPUT_DIR}
   )
 
+  add_executable(zcm_broker_bind_conflict tests/node/zcm_broker_bind_conflict.c)
+  target_link_libraries(zcm_broker_bind_conflict PRIVATE zcm_lib)
+  add_test(NAME zcm_broker_bind_conflict COMMAND zcm_broker_bind_conflict)
+  set_target_properties(zcm_broker_bind_conflict PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${ZCM_TEST_OUTPUT_DIR}
+  )
+
+  add_executable(zcm_domain_resolution tests/node/zcm_domain_resolution.c)
+  target_link_libraries(zcm_domain_resolution PRIVATE zcm_lib)
+  add_test(NAME zcm_domain_resolution COMMAND zcm_domain_resolution)
+  set_target_properties(zcm_domain_resolution PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${ZCM_TEST_OUTPUT_DIR}
+  )
+
+  if(ZCM_BUILD_TOOLS)
+    add_executable(zcm_broker_tool_singleton tests/node/zcm_broker_tool_singleton.c)
+    target_link_libraries(zcm_broker_tool_singleton PRIVATE zcm_lib)
+    add_test(NAME zcm_broker_tool_singleton COMMAND zcm_broker_tool_singleton)
+    set_target_properties(zcm_broker_tool_singleton PROPERTIES
+      RUNTIME_OUTPUT_DIRECTORY ${ZCM_TEST_OUTPUT_DIR}
+    )
+  endif()
+
   add_executable(zcm_proc_reannounce tests/node/zcm_proc_reannounce.c)
   target_link_libraries(zcm_proc_reannounce PRIVATE zcm_lib)
   add_test(NAME zcm_proc_reannounce COMMAND zcm_proc_reannounce)
@@ -294,6 +318,9 @@ if(ZCM_BUILD_TOOLS)
   set_target_properties(zcm_broker PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${ZCM_TOOL_OUTPUT_DIR}
   )
+  if(TARGET zcm_broker_tool_singleton)
+    add_dependencies(zcm_broker_tool_singleton zcm_broker)
+  endif()
 endif()
 
 add_custom_target(test_results

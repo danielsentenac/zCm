@@ -1,418 +1,165 @@
 #include "zcm/zcm.h"
+#include "zcm/zcm_domain.h"
+#include "zcm/zcm_node.h"
 
 #include <errno.h>
 #include <signal.h>
-#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/types.h>
 #include <unistd.h>
-#include <ctype.h>
-#include <ifaddrs.h>
-#include <net/if.h>
-#include <arpa/inet.h>
 #include <sys/stat.h>
 
 static volatile sig_atomic_t g_stop = 0;
-
-static void set_error(char *out_error, size_t out_error_size, const char *fmt, ...) {
-  if (!out_error || out_error_size == 0) return;
-
-  va_list ap;
-  va_start(ap, fmt);
-  vsnprintf(out_error, out_error_size, fmt, ap);
-  va_end(ap);
-}
 
 static void handle_sig(int sig) {
   (void)sig;
   g_stop = 1;
 }
 
-static int resolve_domains_file_path(char *out_path, size_t out_size,
-                                     char *out_error, size_t out_error_size) {
-  if (!out_path || out_size == 0) {
-    set_error(out_error, out_error_size, "invalid output buffer for ZCmDomains path");
+static int broker_ping_endpoint(const char *endpoint) {
+  int ok = 0;
+  zcm_context_t *ctx = NULL;
+  zcm_socket_t *req = NULL;
+  char reply[64] = {0};
+  size_t reply_len = 0;
+
+  if (!endpoint || !*endpoint) return 0;
+
+  ctx = zcm_context_new();
+  if (!ctx) return 0;
+  req = zcm_socket_new(ctx, ZCM_SOCK_REQ);
+  if (!req) goto out;
+
+  zcm_socket_set_timeouts(req, 1000);
+  if (zcm_socket_connect(req, endpoint) != 0) goto out;
+  if (zcm_socket_send_bytes(req, "PING", 4) != 0) goto out;
+  if (zcm_socket_recv_bytes(req, reply, sizeof(reply) - 1, &reply_len) != 0) goto out;
+  reply[reply_len] = '\0';
+  ok = (strcmp(reply, "PONG") == 0);
+
+out:
+  if (req) zcm_socket_free(req);
+  if (ctx) zcm_context_free(ctx);
+  return ok;
+}
+
+static int build_domain_lock_path(const zcm_domain_info_t *info,
+                                  char *out_path, size_t out_size) {
+  const char *slash = NULL;
+  size_t dir_len = 0;
+
+  if (!info || !info->has_domain_mapping || !out_path || out_size == 0) return -1;
+  slash = strrchr(info->domains_file, '/');
+  if (!slash) return -1;
+  dir_len = (size_t)(slash - info->domains_file);
+  if (dir_len == 0) dir_len = 1;
+
+  if (snprintf(out_path, out_size, "%.*s/.zcm_broker_%s.lock",
+               (int)dir_len, info->domains_file, info->domain) >= (int)out_size) {
     return -1;
   }
-  out_path[0] = '\0';
+  return 0;
+}
 
-  const char *env = getenv("ZCMDOMAIN_DATABASE");
-  if (!env || !*env) env = getenv("ZCMMGR");
+static int acquire_domain_lock(const zcm_domain_info_t *info, char *out_path,
+                               size_t out_size, int timeout_ms) {
+  int waited_ms = 0;
 
-  if (env && *env) {
-    if (snprintf(out_path, out_size, "%s/ZCmDomains", env) >= (int)out_size) {
-      set_error(out_error, out_error_size, "ZCmDomains path from environment is too long");
-      return -1;
-    }
+  if (!info || !info->has_domain_mapping) {
+    if (out_path && out_size > 0) out_path[0] = '\0';
     return 0;
   }
+  if (build_domain_lock_path(info, out_path, out_size) != 0) return -1;
 
-  const char *root = getenv("ZCMROOT");
-  if (!root || !*root) {
-    set_error(out_error, out_error_size,
-              "missing ZCMDOMAIN_DATABASE/ZCMMGR and ZCMROOT is not set");
-    return -1;
+  while (!g_stop) {
+    if (mkdir(out_path, 0775) == 0) return 0;
+    if (errno != EEXIST) return -1;
+    if (timeout_ms >= 0 && waited_ms >= timeout_ms) return 1;
+    usleep(100000);
+    waited_ms += 100;
   }
-  if (snprintf(out_path, out_size, "%s/mgr/ZCmDomains", root) >= (int)out_size) {
-    set_error(out_error, out_error_size, "ZCmDomains path derived from ZCMROOT is too long");
-    return -1;
-  }
-  return 0;
+  return 1;
 }
 
-static int load_domain_endpoint(const char *domain, const char *file_name,
-                                char *out_host, size_t out_host_size,
-                                int *out_port) {
-  if (!domain || !*domain || !file_name || !*file_name || !out_host || out_host_size == 0 || !out_port) {
-    return -1;
-  }
-
-  FILE *f = fopen(file_name, "r");
-  if (!f) return -1;
-
-  char line[1024];
-  while (fgets(line, sizeof(line), f)) {
-    char *nl = strchr(line, '\n');
-    if (nl) *nl = '\0';
-    if (line[0] == '#' || line[0] == '\0') continue;
-
-    char *p = line;
-    while (p && (*p == ' ' || *p == '\t')) p++;
-    char *tok_domain = strsep(&p, " \t");
-    if (!tok_domain || strcmp(tok_domain, domain) != 0) continue;
-
-    while (p && (*p == ' ' || *p == '\t')) p++;
-    char *tok_host = strsep(&p, " \t");
-    while (p && (*p == ' ' || *p == '\t')) p++;
-    char *tok_port = strsep(&p, " \t");
-
-    if (!tok_host || !tok_port || !*tok_host || !*tok_port) {
-      fclose(f);
-      return -1;
-    }
-
-    char *end = NULL;
-    long port = strtol(tok_port, &end, 10);
-    if (!end || *end != '\0' || port < 1 || port > 65535) {
-      fclose(f);
-      return -1;
-    }
-
-    snprintf(out_host, out_host_size, "%s", tok_host);
-    *out_port = (int)port;
-    fclose(f);
-    return 0;
-  }
-
-  fclose(f);
-  return -1;
-}
-
-static int parse_tcp_endpoint_port(const char *endpoint, int *out_port,
-                                   char *out_error, size_t out_error_size) {
-  if (!endpoint || !out_port) {
-    set_error(out_error, out_error_size, "invalid broker endpoint");
-    return -1;
-  }
-  if (strncmp(endpoint, "tcp://", 6) != 0) {
-    set_error(out_error, out_error_size,
-              "broker endpoint '%s' is not tcp://host:port", endpoint);
-    return -1;
-  }
-  const char *addr = endpoint + 6;
-  const char *colon = strrchr(addr, ':');
-  if (!colon || !colon[1]) {
-    set_error(out_error, out_error_size,
-              "broker endpoint '%s' is missing a TCP port", endpoint);
-    return -1;
-  }
-  char *end = NULL;
-  long port = strtol(colon + 1, &end, 10);
-  if (!end || *end != '\0' || port < 1 || port > 65535) {
-    set_error(out_error, out_error_size,
-              "broker endpoint '%s' has invalid port '%s'", endpoint, colon + 1);
-    return -1;
-  }
-  *out_port = (int)port;
-  return 0;
-}
-
-static int detect_local_ipv4(char *out_host, size_t out_host_size,
-                             char *out_error, size_t out_error_size) {
-  if (!out_host || out_host_size == 0) {
-    set_error(out_error, out_error_size, "invalid output buffer for local host");
-    return -1;
-  }
-  out_host[0] = '\0';
-
-  struct ifaddrs *ifaddr = NULL;
-  if (getifaddrs(&ifaddr) == 0) {
-    for (struct ifaddrs *ifa = ifaddr; ifa; ifa = ifa->ifa_next) {
-      if (!ifa->ifa_addr) continue;
-      if (ifa->ifa_addr->sa_family != AF_INET) continue;
-      if (ifa->ifa_flags & IFF_LOOPBACK) continue;
-      const struct sockaddr_in *sa = (const struct sockaddr_in *)ifa->ifa_addr;
-      if (inet_ntop(AF_INET, &sa->sin_addr, out_host, out_host_size)) {
-        freeifaddrs(ifaddr);
-        return 0;
-      }
-    }
-    freeifaddrs(ifaddr);
-  }
-
-  char host[256] = {0};
-  if (gethostname(host, sizeof(host) - 1) == 0 && host[0]) {
-    snprintf(out_host, out_host_size, "%s", host);
-    return 0;
-  }
-  set_error(out_error, out_error_size,
-            "could not detect a non-loopback IPv4 address or hostname");
-  return -1;
-}
-
-static int update_domain_host_in_file(const char *file_name, const char *domain,
-                                      const char *new_host, int new_port,
-                                      char *out_error, size_t out_error_size) {
-  if (!file_name || !*file_name || !domain || !*domain || !new_host || !*new_host) {
-    set_error(out_error, out_error_size, "invalid arguments for ZCmDomains update");
-    return -1;
-  }
-  if (new_port < 1 || new_port > 65535) {
-    set_error(out_error, out_error_size, "invalid broker port %d for update", new_port);
-    return -1;
-  }
-  const mode_t domains_mode = (S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-
-  FILE *in = fopen(file_name, "r");
-  if (!in) {
-    set_error(out_error, out_error_size,
-              "cannot open %s for reading: %s", file_name, strerror(errno));
-    return -1;
-  }
-
-  char tmp_name[1024];
-  if (snprintf(tmp_name, sizeof(tmp_name), "%s.tmpXXXXXX", file_name) >= (int)sizeof(tmp_name)) {
-    set_error(out_error, out_error_size,
-              "temporary path for %s is too long", file_name);
-    fclose(in);
-    return -1;
-  }
-  int fd = mkstemp(tmp_name);
-  if (fd < 0) {
-    set_error(out_error, out_error_size,
-              "cannot create temporary file in %s directory: %s", file_name, strerror(errno));
-    fclose(in);
-    return -1;
-  }
-  if (fchmod(fd, domains_mode) != 0) {
-    set_error(out_error, out_error_size,
-              "cannot chmod temporary file %s: %s", tmp_name, strerror(errno));
-    close(fd);
-    unlink(tmp_name);
-    fclose(in);
-    return -1;
-  }
-  FILE *out = fdopen(fd, "w");
-  if (!out) {
-    set_error(out_error, out_error_size,
-              "cannot open temporary stream %s: %s", tmp_name, strerror(errno));
-    close(fd);
-    unlink(tmp_name);
-    fclose(in);
-    return -1;
-  }
-
-  int updated = 0;
-  int malformed_match = 0;
-  char line[2048];
-  while (fgets(line, sizeof(line), in)) {
-    char original[2048];
-    snprintf(original, sizeof(original), "%s", line);
-
-    char parse_buf[2048];
-    snprintf(parse_buf, sizeof(parse_buf), "%s", line);
-    char *nl = strchr(parse_buf, '\n');
-    if (nl) *nl = '\0';
-
-    char *p = parse_buf;
-    while (*p && isspace((unsigned char)*p)) p++;
-    if (*p == '#' || *p == '\0') {
-      fputs(original, out);
-      continue;
-    }
-
-    char *tokens[16] = {0};
-    size_t ntok = 0;
-    char *saveptr = NULL;
-    for (char *tok = strtok_r(p, " \t", &saveptr);
-         tok && ntok < 16;
-         tok = strtok_r(NULL, " \t", &saveptr)) {
-      tokens[ntok++] = tok;
-    }
-
-    if (ntok > 0 && strcmp(tokens[0], domain) == 0 && ntok < 3) {
-      malformed_match = 1;
-    }
-    if (ntok >= 3 && strcmp(tokens[0], domain) == 0) {
-      const char *port_range_start = (ntok >= 4 && tokens[3] && *tokens[3]) ? tokens[3] : "7000";
-      const char *port_range_size = (ntok >= 5 && tokens[4] && *tokens[4]) ? tokens[4] : "100";
-      fprintf(out, "%s %s %d %s %s\n",
-              tokens[0], new_host, new_port,
-              port_range_start, port_range_size);
-      updated = 1;
-    } else {
-      fputs(original, out);
-    }
-  }
-
-  if (ferror(in)) {
-    set_error(out_error, out_error_size,
-              "error while reading %s", file_name);
-    fclose(out);
-    fclose(in);
-    unlink(tmp_name);
-    return -1;
-  }
-
-  if (fflush(out) != 0) {
-    set_error(out_error, out_error_size,
-              "cannot flush temporary file %s: %s", tmp_name, strerror(errno));
-    fclose(out);
-    fclose(in);
-    unlink(tmp_name);
-    return -1;
-  }
-  if (fclose(out) != 0) {
-    out = NULL;
-    set_error(out_error, out_error_size,
-              "cannot finalize temporary file %s: %s", tmp_name, strerror(errno));
-    fclose(in);
-    unlink(tmp_name);
-    return -1;
-  }
-  out = NULL;
-  fclose(in);
-
-  if (!updated) {
-    if (malformed_match) {
-      set_error(out_error, out_error_size,
-                "domain '%s' row in %s is malformed", domain, file_name);
-    } else {
-      set_error(out_error, out_error_size,
-                "domain '%s' not found in %s", domain, file_name);
-    }
-    unlink(tmp_name);
-    return -1;
-  }
-
-  if (rename(tmp_name, file_name) != 0) {
-    set_error(out_error, out_error_size,
-              "cannot rename %s to %s: %s", tmp_name, file_name, strerror(errno));
-    unlink(tmp_name);
-    return -1;
-  }
-  if (chmod(file_name, domains_mode) != 0) {
-    set_error(out_error, out_error_size,
-              "cannot chmod %s after update: %s", file_name, strerror(errno));
-    return -1;
-  }
-  return 0;
-}
-
-static int sync_domain_broker_host(const char *endpoint,
-                                   char *out_error, size_t out_error_size) {
-  if (!endpoint || !*endpoint) {
-    set_error(out_error, out_error_size, "missing broker endpoint");
-    return -1;
-  }
-
-  const char *domain = getenv("ZCMDOMAIN");
-  if (!domain || !*domain) {
-    set_error(out_error, out_error_size, "ZCMDOMAIN is not set");
-    return -1;
-  }
-
-  char file_name[512];
-  if (resolve_domains_file_path(file_name, sizeof(file_name),
-                                out_error, out_error_size) != 0) return -1;
-
-  int port = 0;
-  if (parse_tcp_endpoint_port(endpoint, &port, out_error, out_error_size) != 0) return -1;
-
-  char local_host[256] = {0};
-  if (detect_local_ipv4(local_host, sizeof(local_host),
-                        out_error, out_error_size) != 0) return -1;
-
-  if (update_domain_host_in_file(file_name, domain, local_host, port,
-                                 out_error, out_error_size) != 0) return -1;
-  printf("zcm_broker: updated %s domain=%s host=%s port=%d\n",
-         file_name, domain, local_host, port);
-  fflush(stdout);
-  return 0;
-}
-
-static char *load_endpoint_from_config(void) {
-  const char *override = getenv("ZCMBROKER");
-  if (!override || !*override) override = getenv("ZCMBROKER_ENDPOINT");
-  if (override && *override) {
-    char *endpoint = strdup(override);
-    if (!endpoint) return NULL;
-    return endpoint;
-  }
-
-  const char *domain = getenv("ZCMDOMAIN");
-  if (!domain || !*domain) return NULL;
-
-  char file_name[512];
-  char host[256] = {0};
-  int port = 0;
-  if (resolve_domains_file_path(file_name, sizeof(file_name), NULL, 0) != 0) return NULL;
-  if (load_domain_endpoint(domain, file_name, host, sizeof(host), &port) != 0) return NULL;
-  {
-    char local_host[256] = {0};
-    if (detect_local_ipv4(local_host, sizeof(local_host), NULL, 0) == 0 && local_host[0]) {
-      snprintf(host, sizeof(host), "%s", local_host);
-    }
-  }
-
-  char *endpoint = malloc(512);
-  if (!endpoint) return NULL;
-  snprintf(endpoint, 512, "tcp://%s:%d", host, port);
-  return endpoint;
+static void release_domain_lock(const char *lock_path) {
+  if (!lock_path || !*lock_path) return;
+  (void)rmdir(lock_path);
 }
 
 int main(void) {
   int rc = 1;
-  char *endpoint = load_endpoint_from_config();
+  int have_lock = 0;
+  char lock_path[ZCM_DOMAIN_PATH_MAX] = {0};
+  zcm_domain_info_t info;
   zcm_context_t *ctx = NULL;
   zcm_broker_t *broker = NULL;
 
-  if (!endpoint) {
+  if (zcm_domain_info_load(&info) != 0) {
     fprintf(stderr, "zcm_broker: missing ZCMDOMAIN or ZCmDomains entry\n");
+    goto out;
+  }
+
+  if (broker_ping_endpoint(info.query_endpoint)) {
+    printf("zcm_broker: already running at %s\n", info.query_endpoint);
+    rc = 0;
+    goto out;
+  }
+
+  rc = acquire_domain_lock(&info, lock_path, sizeof(lock_path), 5000);
+  if (rc != 0) {
+    if (broker_ping_endpoint(info.query_endpoint)) {
+      printf("zcm_broker: already running at %s\n", info.query_endpoint);
+      rc = 0;
+      goto out;
+    }
+    fprintf(stderr, "zcm_broker: startup lock busy for domain %s\n",
+            (info.domain[0] ? info.domain : "-"));
+    rc = 1;
+    goto out;
+  }
+  have_lock = info.has_domain_mapping;
+
+  if (broker_ping_endpoint(info.query_endpoint)) {
+    printf("zcm_broker: already running at %s\n", info.query_endpoint);
+    rc = 0;
     goto out;
   }
 
   ctx = zcm_context_new();
   if (!ctx) goto out;
 
-  broker = zcm_broker_start(ctx, endpoint);
+  broker = zcm_broker_start(ctx, info.bind_endpoint);
   if (!broker) {
-    fprintf(stderr, "zcm_broker: start failed\n");
+    if (broker_ping_endpoint(info.query_endpoint)) {
+      printf("zcm_broker: another broker became active at %s\n", info.query_endpoint);
+      rc = 0;
+      goto out;
+    }
+    fprintf(stderr, "zcm_broker: start failed for %s\n", info.bind_endpoint);
     goto out;
   }
 
-  char sync_error[512] = {0};
-  if (sync_domain_broker_host(endpoint, sync_error, sizeof(sync_error)) != 0) {
+  if (info.has_domain_mapping && zcm_domain_info_update_published_host(&info) != 0) {
     fprintf(stderr,
-            "zcm_broker: warning: could not update ZCmDomains: %s\n",
-            sync_error[0] ? sync_error : "unknown error");
+            "zcm_broker: warning: could not update ZCmDomains "
+            "(check ZCMDOMAIN and write permissions)\n");
+  } else if (info.has_domain_mapping) {
+    printf("zcm_broker: updated %s domain=%s host=%s port=%d\n",
+           info.domains_file, info.domain, info.publish_host, info.port);
+    fflush(stdout);
   }
 
   signal(SIGINT, handle_sig);
   signal(SIGTERM, handle_sig);
 
-  printf("zcm_broker listening on %s (Ctrl+C to stop)\n", endpoint);
+  if (have_lock) {
+    release_domain_lock(lock_path);
+    have_lock = 0;
+  }
+
+  printf("zcm_broker listening on %s (Ctrl+C to stop)\n", info.bind_endpoint);
   fflush(stdout);
 
   while (!g_stop && zcm_broker_is_running(broker)) {
@@ -422,8 +169,8 @@ int main(void) {
   rc = 0;
 
 out:
+  if (have_lock) release_domain_lock(lock_path);
   if (broker) zcm_broker_stop(broker);
   if (ctx) zcm_context_free(ctx);
-  free(endpoint);
   return rc;
 }

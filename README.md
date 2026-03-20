@@ -2,7 +2,7 @@
 
 Lightweight messaging toolkit with a directory-service broker and direct peer-to-peer data paths. The broker maintains the registry (name → endpoint), while applications connect directly to exchange data after lookup. This matches the "broker as a directory service" architecture popularized in [ØMQ/ZeroMQ](https://zeromq.org/) patterns, where the broker handles discovery and peers handle transfer.
 
-Published docs: https://danielsentenac.github.io/zCm/
+Published docs: https://anonymous.github.io/zCm/
 
 ## Architecture
 zCm separates discovery from data transfer:
@@ -38,6 +38,18 @@ Diagram (ASCII):
 - Minimal typed message envelope (`zcm-msg`)
 - [ØMQ/ZeroMQ](https://zeromq.org/) transport support (`tcp`, `ipc`, `inproc`)
 - Direct peer-to-peer data transfer after broker lookup
+
+## Domain-aware Broker Startup
+When `ZCMDOMAIN` is set, zCm resolves broker startup from `ZCmDomains`:
+- CLI-style queries use the advertised endpoint currently stored for the domain.
+- `zcm_broker` binds a local endpoint on the current host using the same port.
+- After a successful local bind, `zcm_broker` rewrites `ZCmDomains` to publish the new active host.
+- If another broker is already serving the domain, `zcm_broker` exits cleanly instead of creating a duplicate instance.
+
+This behavior is covered by the focused regression tests:
+- `zcm_broker_bind_conflict`
+- `zcm_domain_resolution`
+- `zcm_broker_tool_singleton`
 
 ## Build
 ```bash

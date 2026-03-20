@@ -1,4 +1,5 @@
 #include "zcm/zcm.h"
+#include "zcm/zcm_domain.h"
 #include "zcm/zcm_node.h"
 #include "zcm/zcm_msg.h"
 
@@ -33,65 +34,11 @@ static void usage(const char *prog) {
 }
 
 static char *load_endpoint_from_config(void) {
-  const char *override = getenv("ZCMBROKER");
-  if (!override || !*override) override = getenv("ZCMBROKER_ENDPOINT");
-  if (override && *override) {
-    char *endpoint = strdup(override);
-    if (!endpoint) return NULL;
-    return endpoint;
-  }
-
-  const char *domain = getenv("ZCMDOMAIN");
-  if (!domain || !*domain) return NULL;
-
-  const char *env = getenv("ZCMDOMAIN_DATABASE");
-  if (!env || !*env) env = getenv("ZCMMGR");
-
-  char file_name[512];
-  if (env && *env) {
-    snprintf(file_name, sizeof(file_name), "%s/ZCmDomains", env);
-  } else {
-    const char *root = getenv("ZCMROOT");
-    if (!root || !*root) return NULL;
-    snprintf(file_name, sizeof(file_name), "%s/mgr/ZCmDomains", root);
-  }
-
-  FILE *f = fopen(file_name, "r");
-  if (!f) return NULL;
-
-  char line[1024];
-  while (fgets(line, sizeof(line), f)) {
-    char *nl = strchr(line, '\n');
-    if (nl) *nl = '\0';
-    if (line[0] == '#' || line[0] == '\0') continue;
-
-    char *p = line;
-    while (p && (*p == ' ' || *p == '\t')) p++;
-    char *tok_domain = strsep(&p, " \t");
-    if (!tok_domain || strcmp(tok_domain, domain) != 0) continue;
-
-    while (p && (*p == ' ' || *p == '\t')) p++;
-    char *tok_host = strsep(&p, " \t");
-    while (p && (*p == ' ' || *p == '\t')) p++;
-    char *tok_port = strsep(&p, " \t");
-
-    if (!tok_host || !tok_port || !*tok_host || !*tok_port) {
-      fclose(f);
-      return NULL;
-    }
-
-    char *endpoint = malloc(512);
-    if (!endpoint) {
-      fclose(f);
-      return NULL;
-    }
-    snprintf(endpoint, 512, "tcp://%s:%s", tok_host, tok_port);
-    fclose(f);
-    return endpoint;
-  }
-
-  fclose(f);
-  return NULL;
+  zcm_domain_info_t info;
+  char *endpoint = NULL;
+  if (zcm_domain_info_load(&info) != 0) return NULL;
+  endpoint = strdup(info.query_endpoint);
+  return endpoint;
 }
 
 static int parse_port_reply(const char *text, int *out_port) {

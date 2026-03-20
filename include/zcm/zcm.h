@@ -12,6 +12,8 @@ extern "C" {
 
 #include <stddef.h>
 
+#include "zcm_domain.h"
+
 /** @addtogroup zcm_low_level
  * @{
  */

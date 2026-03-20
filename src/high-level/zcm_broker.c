@@ -41,6 +41,9 @@ struct zcm_broker {
   int remote_probe_failures_before_drop;
   int trace_reg;
   pthread_t thread;
+  pthread_mutex_t start_mu;
+  pthread_cond_t start_cv;
+  int start_state;
   int running;
   struct zcm_broker_entry *head;
 };
@@ -56,6 +59,15 @@ static int host_equivalent(const char *a, const char *b);
 static int build_tcp_endpoint_text(const char *host, int port,
                                    char *out, size_t out_size);
 
+static void broker_publish_start_state(struct zcm_broker *b, int state) {
+  if (!b) return;
+  pthread_mutex_lock(&b->start_mu);
+  if (b->start_state == 0) {
+    b->start_state = state;
+    pthread_cond_broadcast(&b->start_cv);
+  }
+  pthread_mutex_unlock(&b->start_mu);
+}
 #define ZCM_BROKER_REMOTE_PROBE_INTERVAL_MS_DEFAULT 3000
 #define ZCM_BROKER_REMOTE_PROBE_INTERVAL_MS_MIN 250
 #define ZCM_BROKER_REMOTE_PROBE_INTERVAL_MS_MAX 120000
@@ -1062,11 +1074,16 @@ static int broker_recv_part_text(void *sock, char *out, size_t out_size) {
 static void *broker_thread(void *arg) {
   struct zcm_broker *b = (struct zcm_broker *)arg;
   void *sock = zmq_socket(zcm_context_zmq(b->ctx), ZMQ_REP);
-  if (!sock) return NULL;
+  if (!sock) {
+    broker_publish_start_state(b, -1);
+    return NULL;
+  }
   if (zmq_bind(sock, b->endpoint) != 0) {
+    broker_publish_start_state(b, -1);
     zmq_close(sock);
     return NULL;
   }
+  broker_publish_start_state(b, 1);
 
   while (b->running) {
     zmq_msg_t part;
@@ -1373,6 +1390,17 @@ zcm_broker_t *zcm_broker_start(zcm_context_t *ctx, const char *endpoint) {
   b->remote_probe_failures_before_drop = parse_remote_probe_fails_from_env();
   b->trace_reg = parse_bool_env_default0("ZCM_BROKER_TRACE_REG");
   if (!b->endpoint) { free(b); return NULL; }
+  if (pthread_mutex_init(&b->start_mu, NULL) != 0) {
+    free(b->endpoint);
+    free(b);
+    return NULL;
+  }
+  if (pthread_cond_init(&b->start_cv, NULL) != 0) {
+    pthread_mutex_destroy(&b->start_mu);
+    free(b->endpoint);
+    free(b);
+    return NULL;
+  }
   /* Always register the broker itself so names list is never empty. */
   entry_set(b, "zcmbroker", b->endpoint);
   {
@@ -1381,6 +1409,29 @@ zcm_broker_t *zcm_broker_start(zcm_context_t *ctx, const char *endpoint) {
   }
   b->running = 1;
   if (pthread_create(&b->thread, NULL, broker_thread, b) != 0) {
+    pthread_cond_destroy(&b->start_cv);
+    pthread_mutex_destroy(&b->start_mu);
+    free(b->endpoint);
+    free(b);
+    return NULL;
+  }
+  pthread_mutex_lock(&b->start_mu);
+  while (b->start_state == 0) {
+    pthread_cond_wait(&b->start_cv, &b->start_mu);
+  }
+  int start_state = b->start_state;
+  pthread_mutex_unlock(&b->start_mu);
+  if (start_state != 1) {
+    b->running = 0;
+    pthread_join(b->thread, NULL);
+    pthread_cond_destroy(&b->start_cv);
+    pthread_mutex_destroy(&b->start_mu);
+    struct zcm_broker_entry *e = b->head;
+    while (e) {
+      struct zcm_broker_entry *n = e->next;
+      entry_free(e);
+      e = n;
+    }
     free(b->endpoint);
     free(b);
     return NULL;
@@ -1423,6 +1474,8 @@ void zcm_broker_stop(zcm_broker_t *broker) {
     entry_free(e);
     e = n;
   }
+  pthread_cond_destroy(&broker->start_cv);
+  pthread_mutex_destroy(&broker->start_mu);
   free(broker->endpoint);
   free(broker);
 }
