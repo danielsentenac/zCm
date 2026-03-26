@@ -37,76 +37,140 @@ Config content must be XML (`.cfg` samples are XML files).
 | `ZCM_ADVERTISED_HOST` | Compatibility alias used when `ZCM_PROC_ADVERTISED_HOST` is not set. |
 | `ZCM_PROC_RX_STALE_MS` | Staleness window for `SUB/PULL` receive-byte metrics before reporting `0` (default `5000`, valid `0..600000`; `0` disables aging). |
 
-## Config
+## XML Config Reference
 Validation schema:
-- `$ZCM_PROC_CONFIG_SCHEMA` or `config/schema/proc-config.xsd`
+- `$ZCM_PROC_CONFIG_SCHEMA`, else `config/schema/proc-config.xsd`
 
-Required:
-- `<process @name>`
+`zcm_proc` reads one XML file passed on the command line and validates it before startup.
+The file must contain exactly one `<process>` inside `<procConfig>`.
 
-Optional:
-- repeated `<dataSocket .../>` for `PUB/SUB/PUSH/PULL`
-- `<control @timeoutMs>`
-- `<handlers>`
+Minimal skeleton:
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<procConfig>
+  <process name="myproc">
+    <dataSocket type="PUB" payload="tick" intervalMs="1000"/>
+    <control timeoutMs="200"/>
+    <handlers>
+      <type name="QUERY">
+        <arg kind="double"/>
+        <arg kind="text"/>
+      </type>
+    </handlers>
+  </process>
+</procConfig>
+```
 
-`dataSocket` attributes:
-- `type`: `PUB`, `SUB`, `PUSH`, or `PULL`
-- `PUB`/`PUSH` port is auto-allocated from the current domain range
-- `payload`: optional `PUB`/`PUSH` payload (default `tick`)
-- `intervalMs`: optional `PUB`/`PUSH` period (default `1000`)
-- `targets`: comma-separated source names for `SUB`/`PULL` (multi-target)
-- `target`: optional single-target compatibility alias for `SUB`/`PULL`
-- `topics`: optional `SUB`-only comma-separated topic prefixes
-  (example: `topics="prefix1,prefix2"`). If omitted, `SUB` subscribes to all.
+Element order matters because the XSD uses a strict sequence:
+1. zero or more `<dataSocket/>`
+2. optional `<control/>`
+3. optional `<handlers>...</handlers>`
 
-Handlers:
-- builtin command behavior is fixed:
-  - `PING -> PONG`
-  - `DATA_METRICS -> ROLE=NONE;PUB_PORT=-1;PUSH_PORT=-1;PUB_BYTES=-1;SUB_BYTES=-1;PUSH_BYTES=-1;PULL_BYTES=-1;SUB_TARGETS=-;SUB_TARGET_BYTES=-`
-  - default reply `OK`
-- `<type name="..."> <arg kind="..."/> ... </type>`
-- `arg kind`: `text`, `double`, `float`, `int`
-- TYPE payload order is strict.
-- TYPE handler reply is built in user code and sent as typed message
-  `"<REQ_TYPE>_RPL"` with any payload fields your handler writes.
-- Malformed TYPE payload reply: `ERROR` with expected format.
-- each `SUB` target discovers publisher port with command `DATA_PORT_PUB`
-  (fallback alias: `DATA_PORT`).
-- each `PULL` target discovers pusher port with command `DATA_PORT_PUSH`.
-- payload-byte introspection commands:
-  - `DATA_PAYLOAD_BYTES_PUB`
-  - `DATA_PAYLOAD_BYTES_SUB`
-  - `DATA_PAYLOAD_BYTES_PUSH`
-  - `DATA_PAYLOAD_BYTES_PULL`
+### Element Structure
 
-Process config at init (required):
-- zcm_proc reads the XML file path passed on the command line (no required extension).
-- XML is validated against:
-  - `$ZCM_PROC_CONFIG_SCHEMA`, else `config/schema/proc-config.xsd`
-- `<process @name>` is the process registration name.
-- `zcm_proc` is always an infinite daemon (no runtime mode).
-- `zcm_proc` re-announces its registration periodically so names are restored if broker restarts.
-  - interval can be tuned with `ZCM_PROC_REANNOUNCE_MS` (default `1000`)
-  - exponential retry backoff ceiling is `ZCM_PROC_REANNOUNCE_BACKOFF_MAX_MS` (default `30000`)
-- Optional repeated `<dataSocket>` configures bytes `PUB/SUB/PUSH/PULL`:
-  - `type=PUB|SUB|PUSH|PULL`
-  - `PUB`/`PUSH` auto-allocate a port from the current domain range and use optional `payload`, `intervalMs`
-  - `SUB`/`PULL` use `targets=<proc-a,proc-b,...>` (or legacy `target=<proc-name>`)
-  - `SUB` can define `topics=<prefix1,prefix2,...>` for topic-prefix filtering (default is all topics)
-  - each `SUB` target publisher port is discovered via `DATA_PORT_PUB` (fallback: `DATA_PORT`)
-  - each `PULL` target pusher port is discovered via `DATA_PORT_PUSH`
-- Optional `<handlers>` adds request reply rules:
-  - builtin command behavior is fixed:
-    - `PING -> PONG`
-    - `DATA_METRICS -> ROLE=NONE;PUB_PORT=-1;PUSH_PORT=-1;PUB_BYTES=-1;SUB_BYTES=-1;PUSH_BYTES=-1;PULL_BYTES=-1;SUB_TARGETS=-;SUB_TARGET_BYTES=-`
-    - default reply `OK`
-  - repeated `<type name=...><arg kind=.../>...</type>` with ordered payload args
-  - TYPE replies are built in handler code and sent as typed messages with name `<REQ_TYPE>_RPL`
-  - malformed TYPE requests are rejected with `ERROR` and expected TYPE format
-  - `zcm send` preserves the exact order of repeated payload flags
-  - payload flags: `-t/-d/-f/-i/-c/-s/-l/-b/-a`
-  - `-a` uses `kind:v1,v2,...` with `kind=char|short|int|float|double`
-- Examples: `data/basic.cfg`, `data/publisher.cfg`, `data/subscriber.cfg`, `data/pusher.cfg`, `data/puller.cfg`, `docs/config/zcmproc.cfg`
+| Element | Required | Count | Notes |
+| --- | --- | --- | --- |
+| `<procConfig>` | yes | exactly 1 | Root element. |
+| `<process name="...">` | yes | exactly 1 | Declares the broker registration name and all runtime behavior. |
+| `<dataSocket .../>` | no | `0..16` | Data path role entries for `PUB`, `SUB`, `PUSH`, or `PULL`. |
+| `<control timeoutMs="..."/>` | no | `0..1` | Tunes REP control socket send/recv timeout. |
+| `<handlers>` | no | `0..1` | Container for typed request signatures. |
+| `<handlers><type name="...">` | no | `0..32` | One typed request signature. |
+| `<handlers><type><arg kind="..."/>` | no | `0..32` per type | Ordered payload fields expected for that request type. |
+
+### `<process>` Attributes
+
+| Attribute | Required | Meaning |
+| --- | --- | --- |
+| `name` | yes | Process name used for broker registration, `zcm names`, `zcm ping`, `zcm kill`, and `zcm send NAME ...`. |
+
+### `<dataSocket>` Attributes
+
+| Attribute | Used By | Required | Default | Meaning |
+| --- | --- | --- | --- | --- |
+| `type` | all | yes | none | One of `PUB`, `SUB`, `PUSH`, `PULL`. |
+| `payload` | `PUB`, `PUSH` | no | `tick` | Text payload sent periodically by the sender worker. |
+| `intervalMs` | `PUB`, `PUSH` | no | `1000` | Positive send period in milliseconds. |
+| `target` | `SUB`, `PULL` | no | empty | Legacy single-target form. |
+| `targets` | `SUB`, `PULL` | no | empty | Comma-separated target names. Each non-empty item creates one runtime receiver entry. |
+| `topics` | `SUB` only | no | subscribe all | Comma-separated topic prefixes passed to `zmq_setsockopt(ZMQ_SUBSCRIBE, ...)`. |
+
+`<dataSocket>` rules and semantics:
+- `PUB` and `PUSH` auto-allocate their TCP port from the current `ZCmDomains` port range.
+- Do not define `@port` manually. Runtime rejects it for sender sockets.
+- `payload` is treated as plain text bytes and `PUB_BYTES`/`PUSH_BYTES` are derived from its string length.
+- `intervalMs` must be a positive integer.
+- `SUB` and `PULL` require at least one non-empty target via `target`, `targets`, or both.
+- If both `target` and `targets` are present, both are loaded. This is additive, not exclusive.
+- `targets="a,b,c"` is trimmed token-by-token, so whitespace around commas is ignored.
+- `topics` is valid only for `SUB`. Using it on `PULL` is an error.
+- `topics` is split on commas, surrounding whitespace is trimmed, and empty items are ignored.
+- If `topics` is omitted, the `SUB` socket subscribes to all incoming messages.
+- One `<dataSocket type="SUB" targets="a,b"/>` expands internally to one subscriber worker per target, each sharing the same topic filter list.
+
+Role-specific behavior:
+- `PUB`
+  - binds a local TCP port
+  - sends `payload` every `intervalMs`
+  - reports `PUB_PORT` and `PUB_BYTES`
+- `SUB`
+  - resolves each target publisher via control command `DATA_PORT_PUB` (fallback alias: `DATA_PORT`)
+  - optionally filters by `topics`
+  - reports `SUB_BYTES` from the last received payload
+- `PUSH`
+  - binds a local TCP port
+  - sends `payload` every `intervalMs`
+  - reports `PUSH_PORT` and `PUSH_BYTES`
+- `PULL`
+  - resolves each target pusher via control command `DATA_PORT_PUSH`
+  - reports `PULL_BYTES` from the last received payload
+
+### `<control>` Attributes
+
+| Attribute | Required | Default | Meaning |
+| --- | --- | --- | --- |
+| `timeoutMs` | no | `200` | REP control socket send/recv timeout in milliseconds. |
+
+### `<handlers>` and `<type>` Attributes
+
+| Element / Attribute | Required | Meaning |
+| --- | --- | --- |
+| `<type name="...">` | yes | Request type name matched case-insensitively at runtime. |
+| `<arg kind="text|double|float|int"/>` | yes | One ordered payload field in the expected request body. |
+| `<type reply="...">` | no in schema | Currently ignored by runtime. Reply type is always built as `<REQ_TYPE>_RPL`. |
+
+Typed handler rules:
+- Argument order is strict. Incoming payloads must match the declared `<arg>` order exactly.
+- Supported argument kinds are `text`, `double`, `float`, and `int`.
+- The handler signature only describes request decoding. Reply payload content is produced by user code.
+- Successful typed replies use message type `<REQ_TYPE>_RPL`.
+- Malformed typed requests return `ERROR` with the expected signature summary.
+- `zcm send` preserves the order of repeated payload flags, so the CLI can be used to match the handler signature exactly.
+
+Builtin text/control commands available even without `<handlers>`:
+- `PING -> PONG`
+- `DATA_METRICS -> ROLE=...;PUB_PORT=...;PUSH_PORT=...;PUB_BYTES=...;SUB_BYTES=...;PUSH_BYTES=...;PULL_BYTES=...;SUB_TARGETS=...;SUB_TARGET_BYTES=...`
+- unknown text command -> `OK`
+
+Additional builtin payload-byte commands exposed by `zcm_proc`:
+- `DATA_PAYLOAD_BYTES_PUB`
+- `DATA_PAYLOAD_BYTES_SUB`
+- `DATA_PAYLOAD_BYTES_PUSH`
+- `DATA_PAYLOAD_BYTES_PULL`
+
+Runtime limits:
+- maximum `<dataSocket>` entries per config: `16`
+- maximum `<type>` handlers per config: `32`
+- maximum `<arg>` entries per type: `32`
+- maximum topic prefixes per `SUB` socket: `16`
+
+Sample config files:
+- `data/basic.cfg`
+- `data/publisher.cfg`
+- `data/subscriber.cfg`
+- `data/pusher.cfg`
+- `data/puller.cfg`
+- `docs/config/zcmproc.cfg`
 
 ## Example
 ```xml
