@@ -10,8 +10,11 @@
 extern "C" {
 #endif
 
+/** @brief Maximum number of bytes reserved for domain and host name strings. */
 #define ZCM_DOMAIN_NAME_MAX 256
+/** @brief Maximum number of bytes reserved for the resolved `ZCmDomains` path. */
 #define ZCM_DOMAIN_PATH_MAX 1024
+/** @brief Maximum number of bytes reserved for one broker endpoint string. */
 #define ZCM_DOMAIN_ENDPOINT_MAX 512
 
 /**
@@ -22,12 +25,19 @@ extern "C" {
  * this host should bind to if it becomes the active broker.
  */
 typedef struct zcm_domain_info {
+  /** Nonzero when values came from a `ZCMDOMAIN` -> `ZCmDomains` mapping. */
   int has_domain_mapping;
+  /** Selected domain name from `ZCMDOMAIN`, or empty when explicit broker override is used. */
   char domain[ZCM_DOMAIN_NAME_MAX];
+  /** Resolved path to the `ZCmDomains` file used for lookup/update. */
   char domains_file[ZCM_DOMAIN_PATH_MAX];
+  /** Shared/advertised broker endpoint used by clients to connect to the broker. */
   char query_endpoint[ZCM_DOMAIN_ENDPOINT_MAX];
+  /** Local endpoint the broker on this host should bind to. */
   char bind_endpoint[ZCM_DOMAIN_ENDPOINT_MAX];
+  /** Hostname/IP that should be written back to `ZCmDomains` as the published broker host. */
   char publish_host[ZCM_DOMAIN_NAME_MAX];
+  /** Broker TCP port extracted from the resolved endpoint. */
   int port;
 } zcm_domain_info_t;
 
@@ -49,7 +59,7 @@ int zcm_domain_info_load(zcm_domain_info_t *out_info);
 /**
  * @brief Publish the active broker host back into `ZCmDomains`.
  *
- * This only applies when @ref zcm_domain_info_t.has_domain_mapping is nonzero.
+ * This only applies when `has_domain_mapping` is nonzero.
  *
  * @param info Resolved domain info.
  * @return `0` on success, `-1` on failure.
