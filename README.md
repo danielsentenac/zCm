@@ -2,7 +2,7 @@
 
 Lightweight messaging toolkit with a directory-service broker and direct peer-to-peer data paths. The broker maintains the registry (name → endpoint), while applications connect directly to exchange data after lookup. This matches the "broker as a directory service" architecture popularized in [ØMQ/ZeroMQ](https://zeromq.org/) patterns, where the broker handles discovery and peers handle transfer.
 
-Published docs: https://anonymous.github.io/zCm/
+Published docs: https://danielsentenac.github.io/zCm/
 
 ## Architecture
 zCm separates discovery from data transfer:
